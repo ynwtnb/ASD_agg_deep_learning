@@ -9,4 +9,4 @@ dependencies:
   - peakutils
   - ipywidgets
   - nbformat
-prefix: /Users/yuna.w/miniconda3/envs/asd_agg_dl
+prefix: /home/watanabe.y/miniconda3/envs/asd_agg_dl
