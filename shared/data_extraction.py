@@ -555,12 +555,11 @@ def gen_ppg_features(df, fs=64, preprocessed=False, window_size_rmssd=30, step_s
     hr_filtered[np.where(np.isnan(hr_filtered))[0]] = hr_interpolated
     # Smooth the HR signal
     hr_smoothed = pp.moving_average(hr_filtered, 20)
-    hr_smoothed = np.insert(hr_smoothed, 0, np.nan)
     # Combine with the original data frame
     df_hr = pd.DataFrame({
         'Timestamp': timestamps_hr,
         'HR': hr_smoothed,
-        'Condition': df['Condition'].reindex(timestamps_hr).fillna(0)
+        'Condition': df['Condition'].reindex(peak_idx_for_hr).fillna(0).reset_index(drop=True)
     })
 
     # Get RMSSD
@@ -571,6 +570,7 @@ def gen_ppg_features(df, fs=64, preprocessed=False, window_size_rmssd=30, step_s
     # Smooth the RMSSD signal
     rmssd_smoothed = pp.moving_average(rmssd, 3)
     # Create RMSSD dataframe
+    df = df.set_index('Timestamp')
     df_rmssd = pd.DataFrame(
         {
             'Timestamp': rmssd_timestamps, 
