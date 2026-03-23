@@ -279,7 +279,6 @@ def feat_generator(inputDict, bin_size, aggCategory):
                 bin_df, bin_labels = split_data_into_bins(df=df_phasic_tonic, evidence='PHASIC', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_labels)
                 bin_df, bin_labels = split_data_into_bins(df=df_phasic_tonic, evidence='TONIC', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_labels)
 
-        bin_labels = bin_labels.apply(lambda x: x.astype(float).dropna().max())
         proper_order_of_feats = bin_df.columns
         
         # Sets patient session & id as multilevel index
@@ -608,7 +607,7 @@ def gen_eda_features(df, fs=4, preprocessed=False):
     # Filter EDA signal
     if not preprocessed:
         filt = EDA.Filters(fs=fs)
-        filtered = filt.gaussian(df['EDA'])
+        filtered = filt.lowpass_gaussian(df['EDA'])
         df['EDA_filtered'] = filtered
     
     eda_col = 'EDA_filtered'
@@ -619,7 +618,7 @@ def gen_eda_features(df, fs=4, preprocessed=False):
     record_length = len(df)
     fs = round(record_length / record_duration, 0)
     df[eda_col] = df[eda_col].astype(float)
-    phasic, tonic = EDA.get_phasic_tonic(df[eda_col], fs=fs)
+    phasic, tonic = EDA.decompose_eda(df[eda_col], fs=fs)
     df_phasic_tonic = pd.DataFrame({
         'Timestamp': df.index,
         'PHASIC': phasic,
