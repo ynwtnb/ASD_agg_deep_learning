@@ -582,7 +582,7 @@ def gen_ppg_features(df, fs=64, preprocessed=False, window_size_rmssd=30, step_s
 
     df_hr = df_hr.set_index('Timestamp')
     df_rmssd = df_rmssd.set_index('Timestamp')
-    
+
     return df_hr, df_rmssd
 
 def gen_eda_features(df, fs=4, preprocessed=False):
@@ -629,7 +629,7 @@ def gen_eda_features(df, fs=4, preprocessed=False):
     df_phasic_tonic = df_phasic_tonic.set_index('Timestamp')
     return df_phasic_tonic
 
-def generate_instances_from_data_bins(bin_df, bin_labels, n_obs_bins=12, n_pred_bins=12):
+def generate_instances_from_data_bins(bin_df, bin_labels, n_obs_bins=12, n_pred_bins=12, o_multiclass=False):
     """
     Combines consecutive 15s bins into observation windows and assigns future labels.
     Returns bin_start_indices so train/test splits can avoid overlapping windows.
@@ -645,7 +645,10 @@ def generate_instances_from_data_bins(bin_df, bin_labels, n_obs_bins=12, n_pred_
         Number of bins per observation window (e.g. 12 × 15s = 3 min).
     n_pred_bins : int
         Number of future bins used for label assignment (e.g. 12 × 15s = 3 min).
-
+    o_multiclass : bool
+        Whether to include the multiclass labels in the data.
+        If True, the data will be returned as a multiclass model.
+        If False, the data will be returned as a binary model.
     Returns
     -------
     instances : np.ndarray, shape (n_instances, n_channels, n_obs_bins * samples_per_bin)
@@ -670,7 +673,10 @@ def generate_instances_from_data_bins(bin_df, bin_labels, n_obs_bins=12, n_pred_
             np.concatenate(bin_df[col].iloc[i:i + n_obs_bins].values)
             for col in signal_cols
         ])
-        label = int(label_values[i + n_obs_bins:i + n_obs_bins + n_pred_bins].max() > 0)
+        if o_multiclass:
+            label = label_values[i + n_obs_bins:i + n_obs_bins + n_pred_bins]
+        else:
+            label = int(label_values[i + n_obs_bins:i + n_obs_bins + n_pred_bins].max() > 0)
 
         instances.append(instance)
         labels.append(label)
