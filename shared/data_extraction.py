@@ -247,7 +247,7 @@ def feat_generator(inputDict, bin_size, aggCategory):
             df = list_per_session[data_source]
             df.fillna({'Condition': 0}, inplace=True)
             
-            df['Condition'][df['Condition'].isin(aggCategory)] = 1  # 1 to Agg state
+            df.loc[df['Condition'].isin(aggCategory), 'Condition'] = 1  # 1 to Agg state
 
             # Adding the norm of accelerometer data to the data frame.
             if 'X' in df:
