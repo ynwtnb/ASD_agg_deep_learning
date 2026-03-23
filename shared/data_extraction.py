@@ -208,7 +208,7 @@ def data_extraction_csv_dir(dir, bin_size, agg_cat, path_style='/'):
                         df_index_time = df.set_index('Timestamp')
                     except KeyError as ke:
                         raise(ke)
-                    df_index_time = df_index_time.set_index(pd.to_datetime(df_index_time.index, unit='ms'))
+                    df_index_time = df_index_time.set_index(pd.to_datetime(df_index_time.index.astype('float'), unit='ms'))
                     match = re.search(r'/(\d+\.\d+)_([\d]{2})_', file)
                     patient_id = match.group(1)
                     session = match.group(2)
@@ -247,7 +247,7 @@ def feat_generator(inputDict, bin_size, aggCategory):
             df = list_per_session[data_source]
             df.fillna({'Condition': 0}, inplace=True)
             
-            df['Condition'][df['Condition'].isin(aggCategory)] = 1  # 1 to Agg state
+            df.loc[df['Condition'].isin(aggCategory), 'Condition'] = 1  # 1 to Agg state
 
             # Adding the norm of accelerometer data to the data frame.
             if 'X' in df:
@@ -279,7 +279,6 @@ def feat_generator(inputDict, bin_size, aggCategory):
                 bin_df, bin_labels = split_data_into_bins(df=df_phasic_tonic, evidence='PHASIC', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_labels)
                 bin_df, bin_labels = split_data_into_bins(df=df_phasic_tonic, evidence='TONIC', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_labels)
 
-        bin_labels = bin_labels.apply(lambda x: x.astype(float).dropna().max(), axis=1)
         proper_order_of_feats = bin_df.columns
         
         # Sets patient session & id as multilevel index
@@ -555,12 +554,11 @@ def gen_ppg_features(df, fs=64, preprocessed=False, window_size_rmssd=30, step_s
     hr_filtered[np.where(np.isnan(hr_filtered))[0]] = hr_interpolated
     # Smooth the HR signal
     hr_smoothed = pp.moving_average(hr_filtered, 20)
-    hr_smoothed = np.insert(hr_smoothed, 0, np.nan)
     # Combine with the original data frame
     df_hr = pd.DataFrame({
         'Timestamp': timestamps_hr,
         'HR': hr_smoothed,
-        'Condition': df['Condition'].reindex(timestamps_hr).fillna(0)
+        'Condition': df['Condition'].reindex(peak_idx_for_hr).fillna(0).reset_index(drop=True)
     })
 
     # Get RMSSD
@@ -571,6 +569,7 @@ def gen_ppg_features(df, fs=64, preprocessed=False, window_size_rmssd=30, step_s
     # Smooth the RMSSD signal
     rmssd_smoothed = pp.moving_average(rmssd, 3)
     # Create RMSSD dataframe
+    df = df.set_index('Timestamp')
     df_rmssd = pd.DataFrame(
         {
             'Timestamp': rmssd_timestamps, 
@@ -608,7 +607,7 @@ def gen_eda_features(df, fs=4, preprocessed=False):
     # Filter EDA signal
     if not preprocessed:
         filt = EDA.Filters(fs=fs)
-        filtered = filt.gaussian(df['EDA'])
+        filtered = filt.lowpass_gaussian(df['EDA'])
         df['EDA_filtered'] = filtered
     
     eda_col = 'EDA_filtered'
@@ -619,7 +618,7 @@ def gen_eda_features(df, fs=4, preprocessed=False):
     record_length = len(df)
     fs = round(record_length / record_duration, 0)
     df[eda_col] = df[eda_col].astype(float)
-    phasic, tonic = EDA.get_phasic_tonic(df[eda_col], fs=fs)
+    phasic, tonic = EDA.decompose_eda(df[eda_col], fs=fs)
     df_phasic_tonic = pd.DataFrame({
         'Timestamp': df.index,
         'PHASIC': phasic,
