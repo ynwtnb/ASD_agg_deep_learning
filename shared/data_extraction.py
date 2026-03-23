@@ -208,7 +208,7 @@ def data_extraction_csv_dir(dir, bin_size, agg_cat, path_style='/'):
                         df_index_time = df.set_index('Timestamp')
                     except KeyError as ke:
                         raise(ke)
-                    df_index_time = df_index_time.set_index(pd.to_datetime(df_index_time.index, unit='ms'))
+                    df_index_time = df_index_time.set_index(pd.to_datetime(df_index_time.index.astype('float'), unit='ms'))
                     match = re.search(r'/(\d+\.\d+)_([\d]{2})_', file)
                     patient_id = match.group(1)
                     session = match.group(2)
