@@ -279,7 +279,7 @@ def feat_generator(inputDict, bin_size, aggCategory):
                 bin_df, bin_labels = split_data_into_bins(df=df_phasic_tonic, evidence='PHASIC', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_labels)
                 bin_df, bin_labels = split_data_into_bins(df=df_phasic_tonic, evidence='TONIC', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_labels)
 
-        bin_labels = bin_labels.apply(lambda x: x.astype(float).dropna().max(), axis=1)
+        bin_labels = bin_labels.apply(lambda x: x.astype(float).dropna().max())
         proper_order_of_feats = bin_df.columns
         
         # Sets patient session & id as multilevel index
