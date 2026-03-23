@@ -4,7 +4,7 @@ set -euo pipefail
 
 ENV_NAME="asd_agg_dl"
 PHYSIOVIEW_PATH="../packages/physioview"
-BASE_PATH=$(basename $1)
+BASE_PATH=$(dirname $0)
 
 cd $BASE_PATH
 
