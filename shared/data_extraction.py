@@ -19,7 +19,7 @@ import physio_processing as pp
 def data_preprocess(data_path, num_observation_frames=12, 
                     num_prediction_frames=4, o_run_from_scratch=False,
                     o_return_list_of_sessions=False,
-                    bin_size='15s', o_multiclass=True):
+                    bin_size=15, o_multiclass=True):
     """
     This function preprocesses the data by binning the data and generating instances from the binned data.
 
@@ -40,7 +40,7 @@ def data_preprocess(data_path, num_observation_frames=12,
         Whether to return the data as a list of sessions.
         If True, the data will be returned as a list of sessions.
         If False, the data will be returned as a single numpy array.
-    bin_size : str, optional
+    bin_size : int, optional
         The size of the bins to use for the data.
     o_multiclass : bool, optional
         Whether to include the multiclass labels in the data.
@@ -107,7 +107,7 @@ def data_extraction(dir, bin_size, agg_cat, o_run_from_scratch=False, o_multicla
     present then this function will only load this file and return the appropriate dictionaries unless the boolean
     variable o_run_from_scratch is True.
     :param dir: main directory of the dataset
-    :param bin_size: string containing the sample period (e.g., '15S')
+    :param bin_size: int containing the sample period in seconds (e.g., 15)
     :param agg_cat: list with possible aggression labels (e.g., agg_cat = ['AGG', 'SIB', 'ED'])
     :param path_style: '/' for unix style or '\' for MS windows.
     :param o_multiclass: boolean.
@@ -115,9 +115,9 @@ def data_extraction(dir, bin_size, agg_cat, o_run_from_scratch=False, o_multicla
     """
     # this is the main function
     if o_multiclass:
-        feature_file_name = dir + path_style + 'bin_feat_' + str(bin_size) + '_mc.b'
+        feature_file_name = dir + path_style + 'bin_feat_' + str(bin_size) + 'S_mc.b'
     else:
-        feature_file_name = dir + path_style + 'bin_feat_' + str(bin_size) + '.b'
+        feature_file_name = dir + path_style + 'bin_feat_' + str(bin_size) + 'S.b'
 
     if not os.path.isfile(feature_file_name) or o_run_from_scratch:
         data_dict = data_extraction_csv_dir(dir, bin_size, agg_cat, path_style='/')
@@ -147,7 +147,7 @@ def data_extraction_csv_dir(dir, bin_size, agg_cat, path_style='/'):
 
     Parameters:
     :param dir: main directory of the dataset
-    :param bin_size: string containing the sample period (e.g., '15S')
+    :param bin_size: int containing the sample period in seconds (e.g., 15)
     :param agg_cat: list with possible aggression labels (e.g., agg_cat = ['AGG', 'SIB', 'ED'])
     :param path_style: '/' for unix style or '\' for MS windows.
     :return: data_dict: dictionary containing 'features' and 'labels' for all sessions and users ids.
@@ -232,7 +232,7 @@ def feat_generator(inputDict, bin_size, aggCategory):
     This function generates the features and labels for a given input dictionary.
     
     :param inputDict: dictionary containing the data for a given user
-    :param bin_size: string containing the sample period (e.g., '15S')
+    :param bin_size: int containing the sample period in seconds (e.g., 15)
     :param aggCategory: list with possible aggression labels (e.g., agg_cat = ['AGG', 'SIB', 'ED'])
     :return: dictionary containing the features and labels for a given user
     """
@@ -367,7 +367,7 @@ def split_data_into_bins(df, evidence, bin_df, bin_labels, target_fs=16, bin_siz
 
 def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, num_prediction_frames, o_multiclass=False,
                                             o_return_list_of_sessions=False, outdir="." ,o_run_from_scratch=False,
-                                            bin_size='15S'):
+                                            bin_size=15):
     """
     This function creates arrays of features and labels in ndarrays
     :param feat_dict:
@@ -398,7 +398,7 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
 
     filename = outdir + "/dataInst_to" + str(past_observation_time) + "_tp" \
                 + str(future_prediction_time) + "_mc" + str(o_multiclass) + "_rs" + str(o_return_list_of_sessions) \
-                + '_bs' + str(bin_size) + ".bin"
+                + '_bs' + str(bin_size) + 'S.bin'
 
     if (not o_run_from_scratch) and os.path.isfile(filename):
         # load file
@@ -685,10 +685,9 @@ def gen_superposition_index_list(num_of_instances, num_observation_frames):
     return sup_list
 
 if __name__ == "__main__":
-    data_path = '../../CBS_DATA_ASD_ONLY'
     parser = ArgumentParser()
     parser.add_argument("-dp", "--data_path", type=str, default='../../CBS_DATA_ASD_ONLY', help="Data path")
-    parser.add_argument("-bs", "--bin_size", type=str, default='15S', help="Bin size")
+    parser.add_argument("-bs", "--bin_size", type=int, default=15, help="Bin size in seconds")
     parser.add_argument("-ac", "--agg_cat", type=list, default=['AGG','SIB', 'ED'], help="Aggression categories")
     parser.add_argument("-ofr", "--o_run_from_scratch", type=bool, default=False, help="Run from scratch")
     parser.add_argument("-mc", "--o_multiclass", type=bool, default=True, help="Multiclass")
