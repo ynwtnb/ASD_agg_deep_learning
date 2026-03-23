@@ -266,18 +266,18 @@ def feat_generator(inputDict, bin_size, aggCategory):
                 except:
                     pass
             for e in range(len(evidence)):
-                bin_df, bin_label = split_data_into_bins(df, evidence[e], bin_df, bin_size, bin_label)
+                bin_df, bin_label = split_data_into_bins(df=df, evidence=evidence[e], bin_df=bin_df, bin_size=bin_size, bin_labels=bin_label)
             
             # Generate PPG features
             if 'BVP' in df.columns:
                 df['BVP'] = df['BVP'].astype(float)
                 df_hr, df_rmssd = gen_ppg_features(df)
-                bin_df, bin_label = split_data_into_bins(df_hr, 'HR', bin_df, bin_size, bin_label)
-                bin_df, bin_label = split_data_into_bins(df_rmssd, 'RMSSD', bin_df, bin_size, bin_label)
+                bin_df, bin_label = split_data_into_bins(df=df_hr, evidence='HR', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_label)
+                bin_df, bin_label = split_data_into_bins(df=df_rmssd, evidence='RMSSD', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_label)
             if 'EDA' in df.columns:
                 df_phasic_tonic = gen_eda_features(df)
-                bin_df, bin_label = split_data_into_bins(df_phasic_tonic, 'PHASIC', bin_df, bin_size, bin_label)
-                bin_df, bin_label = split_data_into_bins(df_phasic_tonic, 'TONIC', bin_df, bin_size, bin_label)
+                bin_df, bin_label = split_data_into_bins(df=df_phasic_tonic, evidence='PHASIC', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_label)
+                bin_df, bin_label = split_data_into_bins(df=df_phasic_tonic, evidence='TONIC', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_label)
 
         bin_label = bin_label.apply(lambda x: x.astype(float).dropna().max(), axis=1)
         proper_order_of_feats = bin_df.columns
