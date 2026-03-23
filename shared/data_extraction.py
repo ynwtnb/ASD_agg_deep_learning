@@ -711,9 +711,9 @@ if __name__ == "__main__":
     parser.add_argument("-dp", "--data_path", type=str, default='../../CBS_DATA_ASD_ONLY', help="Data path")
     parser.add_argument("-bs", "--bin_size", type=int, default=15, help="Bin size in seconds")
     parser.add_argument("-ac", "--agg_cat", type=list, default=['AGG','SIB', 'ED'], help="Aggression categories")
-    parser.add_argument("-ofr", "--o_run_from_scratch", type=bool, default=False, help="Run from scratch")
-    parser.add_argument("-mc", "--o_multiclass", type=bool, default=True, help="Multiclass")
-    parser.add_argument("-rol", "--o_return_list_of_sessions", type=bool, default=False, help="Return list of sessions")
+    parser.add_argument("-ofr", "--o_run_from_scratch", action='store_true', help="Run from scratch")
+    parser.add_argument("-mc", "--o_multiclass", action='store_true', help="Multiclass")
+    parser.add_argument("-rol", "--o_return_list_of_sessions", action='store_true', help="Return list of sessions")
     parser.add_argument("-no", "--num_observation_frames", type=int, default=12, help="Number of observation frames")
     parser.add_argument("-np", "--num_prediction_frames", type=int, default=4, help="Number of prediction frames")
     
