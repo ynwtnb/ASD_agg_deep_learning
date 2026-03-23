@@ -81,7 +81,7 @@ def data_preprocess(data_path, num_observation_frames=12,
     # Instance is a sequence of binned data that is used for training/testing
     # The instance labels are the labels for whether the aggression is observed in the future prediction window
     dict_of_instances_arrays, dict_of_labels_arrays, id_blacklist, dict_of_superposition_lists, selected_feat, feat_col_names, dict_of_session_dfs = \
-        generate_instances_from_data_bins(data_dict, num_observation_frames, num_prediction_frames,
+        gen_instances_from_raw_feat_dictionary(data_dict, num_observation_frames, num_prediction_frames,
                                             o_multiclass=o_multiclass,
                                             o_return_list_of_sessions=o_return_list_of_sessions,
                                             outdir=data_path, o_run_from_scratch=o_run_from_scratch, bin_size=bin_size)
@@ -386,6 +386,19 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
                         X[id][i] is a 2D matrix of features for session i.
                         y[id][i] is a 1D array of labels corresponding to the i-th session.
     """
+    selected_feat = [
+        'BVP',
+        'EDA',
+        'X',
+        'Y',
+        'Z',
+        'Magnitude',
+        'HR',
+        'RMSSD',
+        'PHASIC',
+        'TONIC',
+    ]
+
     dict_of_instances_arrays = {}
     dict_of_labels_arrays = {}
     dict_of_superposition_lists = {}
@@ -436,7 +449,7 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
                     feat_data_frame_per_session = feat_list_per_subj[i]
                     label_data_frame_per_session = label_list_per_subj[i]
 
-                    session_instances_array, session_labels_array, bin_start_indices, signal_cols = generate_instances_from_data_bins(
+                    session_instances_array, session_labels_array, signal_cols, instance_df = generate_instances_from_data_bins(
                         feat_data_frame_per_session, 
                         label_data_frame_per_session, 
                         num_observation_frames, 
@@ -633,17 +646,14 @@ def generate_instances_from_data_bins(bin_df, bin_labels, n_obs_bins=12, n_pred_
         Each instance is n_obs_bins consecutive bins concatenated along the time axis.
     labels : np.ndarray, shape (n_instances,)
         1 if any aggression occurs in the future prediction window, else 0.
-    bin_start_indices : np.ndarray, shape (n_instances,)
-        Bin index where each instance starts. Two instances from the same session
-        overlap if |bin_start_i - bin_start_j| < n_obs_bins — use this to enforce
-        non-overlapping train/test splits.
     signal_cols : list of str
         List of signal columns in the order they appear in the dataframe.
+    instance_df : pd.DataFrame
     """
     label_values = bin_labels.reindex(bin_df.index).fillna(0).values
     signal_cols = list(bin_df.columns)
     n_bins = len(bin_df)
-    instances, labels, bin_start_indices = [], [], []
+    instances, labels = [], []
 
     for i in range(n_bins - n_obs_bins - n_pred_bins + 1):
         if label_values[i:i + n_obs_bins].max() > 0:
@@ -658,12 +668,13 @@ def generate_instances_from_data_bins(bin_df, bin_labels, n_obs_bins=12, n_pred_
 
         instances.append(instance)
         labels.append(label)
-        bin_start_indices.append(i)
+    
+    instance_df = pd.DataFrame(instances, columns=signal_cols)
 
     if not instances:
-        return np.array([]), np.array([]), np.array([])
+        return np.array([]), np.array([]), signal_cols, pd.DataFrame()
 
-    return np.stack(instances), np.array(labels), np.array(bin_start_indices), signal_cols
+    return np.stack(instances), np.array(labels), signal_cols, instance_df
 
 # ============= Modules for generating superposition indices =============
 
