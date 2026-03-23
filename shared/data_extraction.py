@@ -518,6 +518,7 @@ def gen_ppg_features(df, fs=64, preprocessed=False, window_size_rmssd=30, step_s
         DataFrame with a DatetimeIndex, a column named `RMSSD`, and a 'Condition' column.
     """
     df = df.copy()
+    df = df.reset_index()
 
     if not preprocessed:
         filt = PPG.Filters(fs=fs)
@@ -577,6 +578,11 @@ def gen_ppg_features(df, fs=64, preprocessed=False, window_size_rmssd=30, step_s
             'Condition': df['Condition'].reindex(rmssd_timestamps).fillna(0)
         }
     )
+
+
+    df_hr = df_hr.set_index('Timestamp')
+    df_rmssd = df_rmssd.set_index('Timestamp')
+    
     return df_hr, df_rmssd
 
 def gen_eda_features(df, fs=4, preprocessed=False):
