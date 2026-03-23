@@ -241,8 +241,8 @@ def feat_generator(inputDict, bin_size, aggCategory):
     bin_label_per_session = []
     for session in range(len(list_of_sessions)):
         list_per_session = list_of_sessions[session]
-        bin_df = {}
-        bin_label = {}
+        bin_df = pd.DataFrame()
+        bin_labels = pd.Series()
         for data_source in range(len(list_per_session)):
             df = list_per_session[data_source]
             df.fillna({'Condition': 0}, inplace=True)
@@ -266,20 +266,20 @@ def feat_generator(inputDict, bin_size, aggCategory):
                 except:
                     pass
             for e in range(len(evidence)):
-                bin_df, bin_label = split_data_into_bins(df=df, evidence=evidence[e], bin_df=bin_df, bin_size=bin_size, bin_labels=bin_label)
+                bin_df, bin_labels = split_data_into_bins(df=df, evidence=evidence[e], bin_df=bin_df, bin_size=bin_size, bin_labels=bin_labels)
             
             # Generate PPG features
             if 'BVP' in df.columns:
                 df['BVP'] = df['BVP'].astype(float)
                 df_hr, df_rmssd = gen_ppg_features(df)
-                bin_df, bin_label = split_data_into_bins(df=df_hr, evidence='HR', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_label)
-                bin_df, bin_label = split_data_into_bins(df=df_rmssd, evidence='RMSSD', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_label)
+                bin_df, bin_labels = split_data_into_bins(df=df_hr, evidence='HR', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_labels)
+                bin_df, bin_labels = split_data_into_bins(df=df_rmssd, evidence='RMSSD', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_labels)
             if 'EDA' in df.columns:
                 df_phasic_tonic = gen_eda_features(df)
-                bin_df, bin_label = split_data_into_bins(df=df_phasic_tonic, evidence='PHASIC', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_label)
-                bin_df, bin_label = split_data_into_bins(df=df_phasic_tonic, evidence='TONIC', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_label)
+                bin_df, bin_labels = split_data_into_bins(df=df_phasic_tonic, evidence='PHASIC', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_labels)
+                bin_df, bin_labels = split_data_into_bins(df=df_phasic_tonic, evidence='TONIC', bin_df=bin_df, bin_size=bin_size, bin_labels=bin_labels)
 
-        bin_label = bin_label.apply(lambda x: x.astype(float).dropna().max(), axis=1)
+        bin_labels = bin_labels.apply(lambda x: x.astype(float).dropna().max(), axis=1)
         proper_order_of_feats = bin_df.columns
         
         # Sets patient session & id as multilevel index
@@ -289,7 +289,7 @@ def feat_generator(inputDict, bin_size, aggCategory):
         bin_df = bin_df.reorder_levels(['patient_id', 'session', bin_df.index.names[0]])
         
         bin_df_per_session.append(bin_df[proper_order_of_feats])    
-        bin_label_per_session.append(bin_label)
+        bin_label_per_session.append(bin_labels)
 
     output_dict = {'features': bin_df_per_session, 'labels': bin_label_per_session}
     
