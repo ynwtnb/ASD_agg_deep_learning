@@ -351,7 +351,7 @@ def split_data_into_bins(df, evidence, bin_df, bin_labels, target_fs=16, bin_siz
 
     if bin_df.empty:
         bin_df = new_col.to_frame()
-    else:
+    elif new_col.name not in bin_df.columns:
         bin_df = bin_df.join(new_col, how='outer')
 
     if bin_labels.empty:
