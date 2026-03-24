@@ -198,7 +198,6 @@ def data_extraction_csv_dir(dir, bin_size, agg_cat, path_style='/', print_progre
 
             # process each session in the folder
             for s in range(n_sessions):
-                if print_progress:
                 # create a session file list
                 session_file_list = csv_file_list[0 + s * n_files_per_session:n_files_per_session + s * n_files_per_session]
                 # print(session_file_list)
