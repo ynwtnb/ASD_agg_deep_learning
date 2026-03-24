@@ -10,6 +10,7 @@ import re
 import numpy as np
 from copy import deepcopy
 from argparse import ArgumentParser
+from tqdm import tqdm
 
 from physioview.pipeline import PPG, EDA, SQA
 
@@ -189,7 +190,7 @@ def data_extraction_csv_dir(dir, bin_size, agg_cat, path_style='/'):
             n_files_per_session = len(set([i.split('/')[-1].split('_')[2] for i in csv_file_list]))
             # print("csv_file_list", csv_file_list)
             n_sessions = int(len(csv_file_list)/n_files_per_session)
-            print(f"{n_sessions} sessions found for {uid}")
+            # print(f"{n_sessions} sessions found for {uid}")
 
             # process each session in the folder
             for s in range(n_sessions):
@@ -420,10 +421,10 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
         dict_of_instances_arrays, dict_of_labels_arrays, id_blacklist, dict_of_superposition_lists, dict_of_session_dfs = datalist
     else:
         # loops over each subject
-        for subject_id in feat_dict:
+        for subject_id in tqdm(feat_dict, desc="Processing subjects"):
             dict_of_superposition_lists[subject_id] = []
             try:
-                print('subject_id', subject_id)
+                # print('subject_id', subject_id)
                 
                 if o_return_list_of_sessions:
                     instances_array_per_subject_list = []
@@ -443,7 +444,7 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
                 sup_list = []
                 # loop over sessions for a given subject
                 for i in range(len(label_list_per_subj)):
-                    print("session " + str(i))
+                    # print("session " + str(i))
                     # getting pandas data frame for each session within a subject
                     feat_data_frame_per_session = feat_list_per_subj[i]
                     label_data_frame_per_session = label_list_per_subj[i]
