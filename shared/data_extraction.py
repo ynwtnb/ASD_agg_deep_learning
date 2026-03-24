@@ -703,7 +703,8 @@ def generate_instances_from_data_bins(bin_df, bin_labels, n_obs_bins=12, n_pred_
 def gen_superposition_index_list(num_of_instances, num_observation_frames):
     """
     Generates a list of superposition indices for each instance.
-    The superposition indices are the indices of the instances that overlap with the current instance.
+    The superposition indices are number of past and future instances that overlap with the current instance.
+    For example, if the superposition indices are [2, 3], then the current instance is overlapped with 2 past and 3 future instances.
     The superposition indices are used to enforce non-overlapping train/test splits.
     
     Parameters
@@ -714,7 +715,7 @@ def gen_superposition_index_list(num_of_instances, num_observation_frames):
     sup_list = []
     for i in range(num_of_instances):
         sup_list.append([i - max(0, i - num_observation_frames + 1),
-                        min(i + num_observation_frames - 1, num_of_instances) - i])
+                        min(i + num_observation_frames - 1, num_of_instances - 1) - i])
     return sup_list
 
 if __name__ == "__main__":
