@@ -624,7 +624,7 @@ def gen_eda_features(df, fs=4, preprocessed=False):
     record_length = len(df)
     fs = round(record_length / record_duration, 0)
     df[eda_col] = df[eda_col].astype(float)
-    phasic, tonic = EDA.decompose_eda(df[eda_col], fs=fs)
+    phasic, tonic = EDA.decompose_eda(df[eda_col], fs=fs, show_progress=False)
     df_phasic_tonic = pd.DataFrame({
         'Timestamp': df.index,
         'PHASIC': phasic,
