@@ -80,7 +80,7 @@ def data_preprocess(data_path, num_observation_frames=12,
     # Then generate instances from binned data
     # Instance is a sequence of binned data that is used for training/testing
     # The instance labels are the labels for whether the aggression is observed in the future prediction window
-    dict_of_instances_arrays, dict_of_labels_arrays, id_blacklist, dict_of_superposition_lists, selected_feat, feat_col_names, dict_of_session_dfs = \
+    dict_of_instances_arrays, dict_of_labels_arrays, id_blacklist, dict_of_superposition_lists, feat_col_names, dict_of_session_dfs = \
         gen_instances_from_raw_feat_dictionary(data_dict, num_observation_frames, num_prediction_frames,
                                             o_multiclass=o_multiclass,
                                             o_return_list_of_sessions=o_return_list_of_sessions,
