@@ -83,7 +83,7 @@ def data_preprocess(data_path, num_observation_frames=12,
     # Then generate instances from binned data
     # Instance is a sequence of binned data that is used for training/testing
     # The instance labels are the labels for whether the aggression is observed in the future prediction window
-    dict_of_instances_arrays, dict_of_labels_arrays, id_blacklist, dict_of_superposition_lists, feat_col_names, dict_of_session_dfs = \
+    dict_of_instances_arrays, dict_of_labels_arrays, dict_of_session_id_arrays, id_blacklist, dict_of_superposition_lists, feat_col_names, dict_of_session_dfs = \
         gen_instances_from_raw_feat_dictionary(data_dict, num_observation_frames, num_prediction_frames,
                                             o_multiclass=o_multiclass,
                                             o_return_list_of_sessions=o_return_list_of_sessions,
@@ -98,7 +98,7 @@ def data_preprocess(data_path, num_observation_frames=12,
                     blacklisted_key = k
             del uid_dict[blacklisted_key]
 
-    return dict_of_instances_arrays, dict_of_labels_arrays, id_blacklist, uid_dict, dict_of_superposition_lists, feat_col_names, dict_of_session_dfs
+    return dict_of_instances_arrays, dict_of_labels_arrays, dict_of_session_id_arrays, id_blacklist, uid_dict, dict_of_superposition_lists, feat_col_names, dict_of_session_dfs
 
 # ============= Modules for binning data =============
 
@@ -409,6 +409,7 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
     dict_of_labels_arrays = {}
     dict_of_superposition_lists = {}
     dict_of_session_dfs ={}
+    dict_of_session_id_arrays = {}
 
     id_blacklist = []
 
@@ -424,7 +425,7 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
         print('loading data instance data...')
         pickle_in = open(filename, 'rb')
         datalist = pickle.load(pickle_in)
-        dict_of_instances_arrays, dict_of_labels_arrays, id_blacklist, dict_of_superposition_lists, signal_cols, dict_of_session_dfs = datalist
+        dict_of_instances_arrays, dict_of_labels_arrays, dict_of_session_id_arrays, id_blacklist, dict_of_superposition_lists, signal_cols, dict_of_session_dfs = datalist
     else:
         # loops over each subject
         for subject_id in tqdm(feat_dict, desc="Getting instances from binned data for subjects"):
@@ -438,11 +439,13 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
                     instances_array_per_subject_list = []
                     labels_array_per_subject_list = []
                     dfs_array_per_subject_list = []
+                    session_id_array_per_subject_list = []
                 else:
                     target_fs = 16
                     instances_array_per_subject = np.array([]).reshape(0, len(selected_feat), num_observation_frames * target_fs * bin_size)
                     labels_array_per_subject = np.array([])
-
+                    session_id_array_per_subject = np.array([])
+                    
                 feat_dic_per_subj = feat_dict[subject_id]
 
                 # getting list of features and labels from each the feature dictionary from subject.
@@ -450,6 +453,7 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
                 label_list_per_subj = feat_dic_per_subj['labels']
 
                 sup_list = []
+                session_list = []
                 # loop over sessions for a given subject
                 for i in range(len(label_list_per_subj)):
                     # print("session " + str(i))
@@ -474,19 +478,21 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
 
                     # append list of superposision_index for current
                     sup_list += gen_superposition_index_list(len(session_instances_array), num_observation_frames)
+                    session_id = feat_data_frame_per_session.index[0][1]
+                    session_id_array = np.full(len(session_instances_array), session_id)
 
                     if o_return_list_of_sessions:
                         instances_array_per_subject_list.append(session_instances_array)
                         labels_array_per_subject_list.append(session_labels_array)
                         dict_of_superposition_lists[subject_id].append(sup_list)
                         sup_list = []
-                        
+                        session_id_array_per_subject_list.append(session_id_array)
                         dfs_array_per_subject_list.append(instance_df)
                     
                     else:
                         instances_array_per_subject = np.concatenate((instances_array_per_subject, session_instances_array), axis=0)
                         labels_array_per_subject = np.concatenate((labels_array_per_subject, session_labels_array), axis=0)
-
+                        session_id_array_per_subject = np.concatenate((session_id_array_per_subject, session_id_array), axis=0)
                 if not o_return_list_of_sessions:
                     dict_of_superposition_lists[subject_id] = sup_list
 
@@ -494,20 +500,21 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
                     dict_of_instances_arrays[subject_id] = instances_array_per_subject_list
                     dict_of_labels_arrays[subject_id] = labels_array_per_subject_list
                     dict_of_session_dfs[subject_id] = dfs_array_per_subject_list
+                    dict_of_session_id_arrays[subject_id] = session_id_array_per_subject_list
                 else:
                     dict_of_instances_arrays[subject_id] = instances_array_per_subject
                     dict_of_labels_arrays[subject_id] = labels_array_per_subject
-
+                    dict_of_session_id_arrays[subject_id] = session_id_array_per_subject
             except AssertionError as error:
                 print(error)
                 id_blacklist.append(subject_id)
                 print('Not possible to construct data for sbj ' + subject_id)
 
-        datalist = [dict_of_instances_arrays, dict_of_labels_arrays, id_blacklist, dict_of_superposition_lists, signal_cols, dict_of_session_dfs]
+        datalist = [dict_of_instances_arrays, dict_of_labels_arrays, dict_of_session_id_arrays, id_blacklist, dict_of_superposition_lists, signal_cols, dict_of_session_dfs]
         pickle_out = open(filename, 'wb')
         pickle.dump(datalist, pickle_out)
 
-    return dict_of_instances_arrays, dict_of_labels_arrays, id_blacklist, dict_of_superposition_lists, signal_cols, dict_of_session_dfs
+    return dict_of_instances_arrays, dict_of_labels_arrays, dict_of_session_id_arrays, id_blacklist, dict_of_superposition_lists, signal_cols, dict_of_session_dfs
 
 def gen_ppg_features(df, fs=64, preprocessed=False, window_size_rmssd=30, step_size_rmssd=1):   
     """
@@ -751,7 +758,7 @@ if __name__ == "__main__":
     num_prediction_frames = args.num_prediction_frames
     print_progress = args.print_progress
 
-    dict_of_instances_arrays, dict_of_labels_arrays, id_blacklist, uid_dict, \
+    dict_of_instances_arrays, dict_of_labels_arrays, dict_of_session_id_arrays, id_blacklist, uid_dict, \
         dict_of_superposition_lists, feat_col_names, dict_of_session_dfs = data_preprocess(
             data_path=data_path, num_observation_frames=num_observation_frames, num_prediction_frames=num_prediction_frames,
             o_run_from_scratch=o_run_from_scratch, o_return_list_of_sessions=o_return_list_of_sessions,  
