@@ -339,15 +339,17 @@ def split_data_into_bins(df, evidence, bin_df, bin_labels, target_fs=16, bin_siz
     signal_trimmed = signal_resampled.iloc[:n_bins * samples_per_bin]
     labels_trimmed = labels_resampled.reindex(signal_trimmed.index).fillna(0)
 
-    bin_timestamps = signal_trimmed.index[::samples_per_bin]
+    bin_timestamps = signal_trimmed.index[::samples_per_bin].floor(f'{bin_size}s')
     # Each cell is a 1D array of shape (samples_per_bin,)
     chunks = signal_trimmed.values.reshape(n_bins, samples_per_bin)
     new_col = pd.Series([chunks[i] for i in range(n_bins)], index=bin_timestamps, name=evidence)
+    new_col = new_col[~new_col.index.duplicated(keep='first')]
 
     new_labels = pd.Series(
         labels_trimmed.values.reshape(n_bins, samples_per_bin).max(axis=1),
         index=bin_timestamps
     )
+    new_labels = new_labels[~new_labels.index.duplicated(keep='first')]
 
     if bin_df.empty:
         bin_df = new_col.to_frame()
@@ -667,9 +669,14 @@ def generate_instances_from_data_bins(bin_df, bin_labels, n_obs_bins=12, n_pred_
         if label_values[i:i + n_obs_bins].max() > 0:
             continue  # skip: aggression already ongoing in observation window
 
+        # Skip windows where any signal has missing bins (NaN from outer join)
+        window = bin_df.iloc[i:i + n_obs_bins]
+        if window.applymap(lambda v: not isinstance(v, np.ndarray)).any().any():
+            continue
+
         # Stack signals: (n_channels, n_obs_bins * samples_per_bin)
         instance = np.stack([
-            np.concatenate(bin_df[col].iloc[i:i + n_obs_bins].values)
+            np.concatenate(window[col].values)
             for col in signal_cols
         ])
         if o_multiclass:
