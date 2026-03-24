@@ -673,7 +673,7 @@ def generate_instances_from_data_bins(bin_df, bin_labels, n_obs_bins=12, n_pred_
 
         # Skip windows where any signal has missing bins (NaN from outer join)
         window = bin_df.iloc[i:i + n_obs_bins]
-        if window.applymap(lambda v: not isinstance(v, np.ndarray)).any().any():
+        if window.map(lambda v: not isinstance(v, np.ndarray)).any().any():
             continue
 
         # Stack signals: (n_channels, n_obs_bins * samples_per_bin)
