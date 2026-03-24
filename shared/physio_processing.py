@@ -141,7 +141,7 @@ def get_rmssd(peak_idx: np.ndarray, fs: int, window_size: int, window_step: int,
         # Get the corresponding IBI differences (NaN values excluded by nanmean)
         window_ibi_diff = ibi_diff[window_mask]
 
-        if len(window_ibi_diff) > 0:
+        if np.any(~np.isnan(window_ibi_diff)):
             # Calculate RMSSD: root mean square of successive differences
             rmssd[i] = np.sqrt(np.nanmean((window_ibi_diff * 1000) ** 2))
         else:
