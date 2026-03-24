@@ -459,7 +459,8 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
                         num_prediction_frames, 
                         o_multiclass=o_multiclass)
 
-                    if session_instances_array is None:
+                    if len(session_instances_array) == 0:
+                        print(f"No instances found for session {i}")
                         continue
 
                     # append list of superposision_index for current
