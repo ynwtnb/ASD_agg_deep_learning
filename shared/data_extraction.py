@@ -250,8 +250,8 @@ def feat_generator(inputDict, bin_size, aggCategory):
             df.loc[df['Condition'].isin(aggCategory), 'Condition'] = 1  # 1 to Agg state
 
             # Adding the norm of accelerometer data to the data frame.
-            if 'X' in df:
-                acc_data = (df[['X', 'Y', 'Z']]).to_numpy().astype(np.float)
+            if 'ACC_X' in df.columns:
+                acc_data = (df[['ACC_X', 'ACC_Y', 'ACC_Z']]).to_numpy().astype(float)
                 df['Magnitude'] = np.linalg.norm(acc_data, axis=1)
 
             if df['Condition'].nunique() > 2:
@@ -390,9 +390,9 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
     selected_feat = [
         'BVP',
         'EDA',
-        'X',
-        'Y',
-        'Z',
+        'ACC_X',
+        'ACC_Y',
+        'ACC_Z',
         'Magnitude',
         'HR',
         'RMSSD',
