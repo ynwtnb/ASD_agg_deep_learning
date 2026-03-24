@@ -186,7 +186,7 @@ def data_extraction_csv_dir(dir, bin_size, agg_cat, path_style='/'):
             csv_file_list.sort(key=lambda x: x.split(path_style)[-1].split('_')[1])
 
             # count the number of different files for sessions
-            n_files_per_session = len(set([i.split('_')[-1].split('.')[0] for i in csv_file_list]))
+            n_files_per_session = len(set([i.split('/')[-1].split('_')[2] for i in csv_file_list]))
             # print("csv_file_list", csv_file_list)
             n_sessions = int(len(csv_file_list)/n_files_per_session)
             print(f"{n_sessions} sessions found for {uid}")
