@@ -20,7 +20,8 @@ import physio_processing as pp
 def data_preprocess(data_path, num_observation_frames=12, 
                     num_prediction_frames=4, o_run_from_scratch=False,
                     o_return_list_of_sessions=False,
-                    bin_size=15, o_multiclass=True):
+                    bin_size=15, o_multiclass=True,
+                    print_progress=False):
     """
     This function preprocesses the data by binning the data and generating instances from the binned data.
 
@@ -77,7 +78,8 @@ def data_preprocess(data_path, num_observation_frames=12,
     # The labels are the labels for whether the aggression is observed in each bin
     data_dict, uid_dict = data_extraction(data_path, bin_size, agg_cat,
                                             o_run_from_scratch=o_run_from_scratch,
-                                            o_multiclass=o_multiclass)
+                                            o_multiclass=o_multiclass,
+                                            print_progress=print_progress)
     # Then generate instances from binned data
     # Instance is a sequence of binned data that is used for training/testing
     # The instance labels are the labels for whether the aggression is observed in the future prediction window
@@ -85,7 +87,8 @@ def data_preprocess(data_path, num_observation_frames=12,
         gen_instances_from_raw_feat_dictionary(data_dict, num_observation_frames, num_prediction_frames,
                                             o_multiclass=o_multiclass,
                                             o_return_list_of_sessions=o_return_list_of_sessions,
-                                            outdir=data_path, o_run_from_scratch=o_run_from_scratch, bin_size=bin_size)
+                                            outdir=data_path, o_run_from_scratch=o_run_from_scratch, bin_size=bin_size,
+                                            print_progress=print_progress)
 
     # remove blacklisted IDs from IDsdict
     if len(id_blacklist) != 0:
@@ -99,7 +102,7 @@ def data_preprocess(data_path, num_observation_frames=12,
 
 # ============= Modules for binning data =============
 
-def data_extraction(dir, bin_size, agg_cat, o_run_from_scratch=False, o_multiclass=False, path_style='/'):
+def data_extraction(dir, bin_size, agg_cat, o_run_from_scratch=False, o_multiclass=False, path_style='/', print_progress=False):
     """
     Main feature extraction function. This function reads files from the dataset directory 'dir' and returns two
     dictionaries: a data_dict, with dataframes of features and labels for all users and all sessions, and a uid_dict
@@ -121,7 +124,7 @@ def data_extraction(dir, bin_size, agg_cat, o_run_from_scratch=False, o_multicla
         feature_file_name = dir + path_style + 'bin_feat_' + str(bin_size) + 'S.b'
 
     if not os.path.isfile(feature_file_name) or o_run_from_scratch:
-        data_dict = data_extraction_csv_dir(dir, bin_size, agg_cat, path_style='/')
+        data_dict = data_extraction_csv_dir(dir, bin_size, agg_cat, path_style='/', print_progress=print_progress)
         pickle_out = open(feature_file_name, 'wb')
         pickle.dump(data_dict, pickle_out)
     else:
@@ -132,7 +135,7 @@ def data_extraction(dir, bin_size, agg_cat, o_run_from_scratch=False, o_multicla
     uid_dict = {i: uids[i] for i in range(len(uids))}
     return data_dict, uid_dict
 
-def data_extraction_csv_dir(dir, bin_size, agg_cat, path_style='/'):
+def data_extraction_csv_dir(dir, bin_size, agg_cat, path_style='/', print_progress=False):
     """
     This function performs data extraction for all csv files in directory 'dir'. It groups by user's id and sessions.
     Ids are the first 4 digits of folders names containing the csv files. Data from each folder are treated as
@@ -165,11 +168,12 @@ def data_extraction_csv_dir(dir, bin_size, agg_cat, path_style='/'):
     # get uids
     uids = list(set([relevant_folders[i].split(path_style)[-1].split('.')[0]
                     for i in range(len(relevant_folders))]))
-    # TODO: Delete this after testing
-    uids = [uids[0]]
 
     data_dict = {}
-    for uid in uids:
+    for uid in tqdm(uids, desc="Extracting binned features from csv files for users"):
+        if print_progress:
+            print(f"    ID: {uid}")
+            print(f"        Loading csv files...")
         # get folder list with the same id
         uid_folder_list = [relevant_folders[i] for i in range(len(relevant_folders)) if
                             relevant_folders[i].split(path_style)[-1].split('.')[0] == str(uid)]
@@ -194,6 +198,7 @@ def data_extraction_csv_dir(dir, bin_size, agg_cat, path_style='/'):
 
             # process each session in the folder
             for s in range(n_sessions):
+                if print_progress:
                 # create a session file list
                 session_file_list = csv_file_list[0 + s * n_files_per_session:n_files_per_session + s * n_files_per_session]
                 # print(session_file_list)
@@ -224,6 +229,8 @@ def data_extraction_csv_dir(dir, bin_size, agg_cat, path_style='/'):
                 
         user_dict = {"dataAll": uid_data_list}
 
+        if print_progress:
+            print(f"        Generating features...")
         data_dict[uid] = feat_generator(user_dict, bin_size, agg_cat)
         
     return data_dict
@@ -367,7 +374,7 @@ def split_data_into_bins(df, evidence, bin_df, bin_labels, target_fs=16, bin_siz
 
 def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, num_prediction_frames, o_multiclass=False,
                                             o_return_list_of_sessions=False, outdir="." ,o_run_from_scratch=False,
-                                            bin_size=15):
+                                            bin_size=15, print_progress=False):
     """
     This function creates arrays of features and labels in ndarrays
     :param feat_dict:
@@ -421,7 +428,9 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
         dict_of_instances_arrays, dict_of_labels_arrays, id_blacklist, dict_of_superposition_lists, dict_of_session_dfs = datalist
     else:
         # loops over each subject
-        for subject_id in tqdm(feat_dict, desc="Processing subjects"):
+        for subject_id in tqdm(feat_dict, desc="Getting instances from binned data for subjects"):
+            if print_progress:
+                print(f"    ID: {subject_id}")
             dict_of_superposition_lists[subject_id] = []
             try:
                 # print('subject_id', subject_id)
@@ -730,6 +739,7 @@ if __name__ == "__main__":
     parser.add_argument("-rol", "--o_return_list_of_sessions", action='store_true', help="Return list of sessions")
     parser.add_argument("-no", "--num_observation_frames", type=int, default=12, help="Number of observation frames")
     parser.add_argument("-np", "--num_prediction_frames", type=int, default=4, help="Number of prediction frames")
+    parser.add_argument("-p", "--print_progress", action='store_true', help="Print progress")
     
     args = parser.parse_args()
     data_path = args.data_path
@@ -740,10 +750,12 @@ if __name__ == "__main__":
     o_return_list_of_sessions = args.o_return_list_of_sessions
     num_observation_frames = args.num_observation_frames
     num_prediction_frames = args.num_prediction_frames
+    print_progress = args.print_progress
 
     dict_of_instances_arrays, dict_of_labels_arrays, id_blacklist, uid_dict, \
         dict_of_superposition_lists, feat_col_names, dict_of_session_dfs = data_preprocess(
             data_path=data_path, num_observation_frames=num_observation_frames, num_prediction_frames=num_prediction_frames,
             o_run_from_scratch=o_run_from_scratch, o_return_list_of_sessions=o_return_list_of_sessions,  
             bin_size=bin_size, o_multiclass=o_multiclass, 
+            print_progress=print_progress,
         )
