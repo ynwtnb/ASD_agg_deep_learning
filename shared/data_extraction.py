@@ -424,7 +424,7 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
         print('loading data instance data...')
         pickle_in = open(filename, 'rb')
         datalist = pickle.load(pickle_in)
-        dict_of_instances_arrays, dict_of_labels_arrays, id_blacklist, dict_of_superposition_lists, dict_of_session_dfs = datalist
+        dict_of_instances_arrays, dict_of_labels_arrays, id_blacklist, dict_of_superposition_lists, signal_cols, dict_of_session_dfs = datalist
     else:
         # loops over each subject
         for subject_id in tqdm(feat_dict, desc="Getting instances from binned data for subjects"):
@@ -503,7 +503,7 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
                 id_blacklist.append(subject_id)
                 print('Not possible to construct data for sbj ' + subject_id)
 
-        datalist = [dict_of_instances_arrays, dict_of_labels_arrays, id_blacklist, dict_of_superposition_lists, dict_of_session_dfs]
+        datalist = [dict_of_instances_arrays, dict_of_labels_arrays, id_blacklist, dict_of_superposition_lists, signal_cols, dict_of_session_dfs]
         pickle_out = open(filename, 'wb')
         pickle.dump(datalist, pickle_out)
 
