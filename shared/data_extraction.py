@@ -448,6 +448,10 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
                     feat_data_frame_per_session = feat_list_per_subj[i]
                     label_data_frame_per_session = label_list_per_subj[i]
 
+                    # If the dataframe does not have any of the selected features, skip the session
+                    if not all([feat in feat_data_frame_per_session.columns for feat in selected_feat]):
+                        continue
+
                     session_instances_array, session_labels_array, signal_cols, instance_df = generate_instances_from_data_bins(
                         feat_data_frame_per_session, 
                         label_data_frame_per_session, 
