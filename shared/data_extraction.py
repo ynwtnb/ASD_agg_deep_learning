@@ -430,9 +430,9 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
                     labels_array_per_subject_list = []
                     dfs_array_per_subject_list = []
                 else:
-                    instances_array_per_subject = np.array([]).reshape(0, num_observation_frames * len(selected_feat) +
-                                                                        len(selected_feat))
-                    labels_array_per_subject = np.array([]).reshape(0, 1)
+                    target_fs = 16
+                    instances_array_per_subject = np.array([]).reshape(0, len(selected_feat), num_observation_frames * target_fs * bin_size)
+                    labels_array_per_subject = np.array([])
 
                 feat_dic_per_subj = feat_dict[subject_id]
 
