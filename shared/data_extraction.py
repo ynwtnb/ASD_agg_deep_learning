@@ -689,7 +689,9 @@ def generate_instances_from_data_bins(bin_df, bin_labels, n_obs_bins=12, n_pred_
         instances.append(instance)
         labels.append(label)
     
-    instance_df = pd.DataFrame(instances, columns=signal_cols)
+    instance_df = pd.DataFrame(
+        [{col: inst[j] for j, col in enumerate(signal_cols)} for inst in instances]
+    )
 
     if not instances:
         return np.array([]), np.array([]), signal_cols, pd.DataFrame()
