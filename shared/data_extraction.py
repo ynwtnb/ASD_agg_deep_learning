@@ -260,11 +260,9 @@ def feat_generator(inputDict, bin_size, aggCategory):
 
             # evidence = list(df.columns.values)
             evidence =  [col for col in df.columns if col != 'patientid_session']
-            for tag in ['Condition', 'patient_id', 'session']:
-                try:
+            for tag in ['Condition', 'patient_id', 'session', 'Note', 'AGG', 'ED', 'SIB']:
+                if tag in evidence:
                     evidence.remove(tag)
-                except:
-                    pass
             for e in range(len(evidence)):
                 bin_df, bin_labels = split_data_into_bins(df=df, evidence=evidence[e], bin_df=bin_df, bin_size=bin_size, bin_labels=bin_labels)
             
