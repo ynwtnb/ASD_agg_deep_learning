@@ -4,7 +4,7 @@ import torch
 import random
 import sklearn
 import sklearn.linear_model
-from sklearn.externals import joblib
+import joblib
 from sklearn.cluster import KMeans
 from collections import Counter
 from sklearn.neighbors import KNeighborsClassifier
