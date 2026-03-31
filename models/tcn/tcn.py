@@ -1,276 +1,433 @@
 """
-Temporal Convolutional Network for binary aggression prediction from wearable biosignal windows.
+End-to-end supervised TCN training and evaluation pipeline for ASD aggression prediction.
 """
 
+import argparse
+import json
+import os
+import sys
+import timeit
+from math import trunc
+
+import numpy as np
 import torch
 import torch.nn as nn
-from torch.nn.utils import weight_norm
+from torch.utils.data import DataLoader, Subset
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../shared'))
+
+from dataset import ASDAggressionDataset
+from splitters import loso_splits, kfold_participant_splits, session_splits
+from tcn import AggressionTCN
+from trainer import train
+from evaluator import evaluate, summarize_metrics
 
 
-# ============= Constants =============
+# ============= Reproducibility =============
 
-N_INPUT_CHANNELS = 10       # BVP, EDA, ACC_X, ACC_Y, ACC_Z, Magnitude, HR, RMSSD, PHASIC, TONIC
-DEFAULT_CHANNEL_LIST = [64, 64, 128, 128, 256, 256, 256, 256]
-DEFAULT_KERNEL_SIZE = 7
-DEFAULT_DROPOUT = 0.2
-DEFAULT_READOUT = 'last'    # 'last' | 'mean' | 'adaptive_max'
-
-# Receptive field with defaults:
-# RF = 1 + 2*(7-1)*(1+2+4+8+16+32+64+128) = 3061 samples
-# Full window = 12*16*15 = 2880 samples; RF exceeds window at all readout positions.
+SEED = 42
 
 
-# ============= Helpers =============
+def set_seed(seed):
+    """Sets Python, NumPy, and PyTorch seeds for reproducibility."""
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
-class Chomp1d(nn.Module):
+
+# ============= Normalization =============
+
+class NormSubset(Subset):
     """
-    Removes trailing time steps introduced by causal left-padding.
+    Subset wrapper that applies per-channel z-score normalization in __getitem__.
+
+    Stats are computed from the inner training split only and frozen at
+    construction. Applying normalization here rather than in-place preserves
+    the original dataset array, which is shared across all folds.
 
     Parameters
     ----------
-    chomp_size : int
-        Number of trailing time steps to remove.
+    subset : torch.utils.data.Subset
+    mean : np.ndarray, shape (C,)
+        Per-channel mean computed from the inner training split.
+    std : np.ndarray, shape (C,)
+        Per-channel std computed from the inner training split.
     """
 
-    def __init__(self, chomp_size: int):
-        super().__init__()
-        self.chomp_size = chomp_size
+    def __init__(self, subset, mean, std):
+        super().__init__(subset.dataset, subset.indices)
+        self.mean = torch.tensor(mean, dtype=torch.float32).unsqueeze(1)  # (C, 1)
+        self.std = torch.tensor(std, dtype=torch.float32).unsqueeze(1)    # (C, 1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x[:, :, :-self.chomp_size]
+    def __getitem__(self, idx):
+        signals, label = super().__getitem__(idx)
+        return (signals - self.mean) / self.std, label
 
 
-def _make_causal_conv(
-    n_in: int,
-    n_out: int,
-    kernel_size: int,
-    padding: int,
-    dilation: int,
-) -> nn.Conv1d:
+def compute_norm_stats(subset):
     """
-    Constructs a weight-normalized Conv1d with causal padding.
+    Computes per-channel mean and std over all instances and time steps.
 
     Parameters
     ----------
-    n_in : int
-    n_out : int
-    kernel_size : int
-    padding : int
-        Symmetric padding; right side is removed by Chomp1d.
-    dilation : int
+    subset : torch.utils.data.Subset
 
     Returns
     -------
-    conv : nn.Conv1d
-        Weight-normalized convolution.
+    mean : np.ndarray, shape (C,)
+    std : np.ndarray, shape (C,)
     """
-    conv = nn.Conv1d(n_in, n_out, kernel_size, padding=padding, dilation=dilation)
-    conv.weight.data.normal_(0, 0.01)
-    return weight_norm(conv)
+    idx = np.asarray(subset.indices).astype(int)
+    X = subset.dataset.instances[idx]   # (N, C, T)
+    mean = X.mean(axis=(0, 2))
+    std = X.std(axis=(0, 2))
+    std[std == 0] = 1.0
+    return mean, std
 
 
-# ============= Residual Block =============
-
-class TemporalBlock(nn.Module):
+def compute_pos_weight(subset):
     """
-    Single TCN residual block: two dilated causal convolutions with weight normalization.
-
-    Causality is enforced by padding (kernel_size - 1) * dilation steps symmetrically
-    and trimming the right-side excess via Chomp1d after each convolution.
+    Computes BCE pos_weight = n_negative / n_positive from a training Subset.
 
     Parameters
     ----------
-    n_inputs : int
-    n_outputs : int
-    kernel_size : int
-    dilation : int
-    dropout : float
+    subset : torch.utils.data.Subset
+
+    Returns
+    -------
+    pos_weight : torch.Tensor, shape (1,)
     """
+    idx = np.asarray(subset.indices).astype(int)
+    labels = subset.dataset.labels[idx]
+    n_pos = float(labels.sum())
+    n_neg = float(len(labels) - n_pos)
+    weight = torch.tensor([n_neg / max(n_pos, 1.0)], dtype=torch.float32)
+    print(f"  class imbalance -- pos_weight: {weight.item():.2f}")
+    return weight
 
-    def __init__(
-        self,
-        n_inputs: int,
-        n_outputs: int,
-        kernel_size: int,
-        dilation: int,
-        dropout: float = DEFAULT_DROPOUT,
-    ):
-        super().__init__()
-        causal_pad = (kernel_size - 1) * dilation
 
-        self.causal = nn.Sequential(
-            _make_causal_conv(n_inputs, n_outputs, kernel_size, causal_pad, dilation),
-            Chomp1d(causal_pad),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            _make_causal_conv(n_outputs, n_outputs, kernel_size, causal_pad, dilation),
-            Chomp1d(causal_pad),
-            nn.ReLU(),
-            nn.Dropout(dropout),
+# ============= Val split =============
+
+def make_val_split(train_subset, val_prop=0.2):
+    """
+    Chronological val split from a train Subset, respecting session boundaries.
+
+    Applies the same superposition-gap logic as session_splits: the overlap
+    buffer at each session's split boundary is removed from the training tail
+    to prevent temporal leakage. Sessions with fewer than 4 instances are kept
+    entirely in training.
+
+    Parameters
+    ----------
+    train_subset : torch.utils.data.Subset
+    val_prop : float
+
+    Returns
+    -------
+    inner_train : torch.utils.data.Subset
+    inner_val : torch.utils.data.Subset
+    """
+    dataset = train_subset.dataset
+    train_idx = np.asarray(train_subset.indices).astype(int)
+
+    pids = dataset.get_participant_ids()[train_idx]
+    session_ids = dataset.get_session_ids()[train_idx]
+    sup = dataset.get_superposition_lists()[train_idx]  # (N, 2)
+
+    inner_train_idx = []
+    inner_val_idx = []
+
+    for pid in np.unique(pids):
+        pid_mask = pids == pid
+        pid_idx = train_idx[pid_mask]
+        pid_sessions = session_ids[pid_mask]
+        pid_sup = sup[pid_mask]
+
+        for sess in np.unique(pid_sessions):
+            sess_mask = pid_sessions == sess
+            sess_idx = pid_idx[sess_mask]
+            sess_sup = pid_sup[sess_mask]
+
+            n = len(sess_idx)
+            if n < 4:
+                inner_train_idx.extend(sess_idx.tolist())
+                continue
+
+            first_val = trunc(n * (1 - val_prop))
+            n_overlap = int(sess_sup[first_val][0])
+            last_train = first_val - n_overlap
+
+            inner_train_idx.extend(sess_idx[:last_train].tolist())
+            inner_val_idx.extend(sess_idx[first_val:].tolist())
+
+    return Subset(dataset, inner_train_idx), Subset(dataset, inner_val_idx)
+
+
+# ============= Model =============
+
+def build_model(params, device):
+    """
+    Instantiates AggressionTCN from a hyperparameter dict and moves it to device.
+
+    Parameters
+    ----------
+    params : dict
+    device : torch.device
+
+    Returns
+    -------
+    model : AggressionTCN
+    """
+    model = AggressionTCN(
+        n_input_channels=params['n_input_channels'],
+        channel_list=params['channel_list'],
+        kernel_size=params['kernel_size'],
+        dropout=params['dropout'],
+        readout=params['readout'],
+    )
+    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"  model parameters: {n_params:,}")
+    print(f"  receptive field:  {model.receptive_field} samples")
+    return model.to(device)
+
+
+# ============= Fold runner =============
+
+def run_fold(train_subset, test_subset, params, device, save_path,
+             val_prop=0.2, o_load=False):
+    """
+    Executes one train/evaluate cycle for a single fold.
+
+    An inner chronological val split is created from train_subset via
+    make_val_split. Normalization stats and pos_weight are derived from the
+    inner training split only. The test_subset is never touched during training.
+    Threshold for test evaluation is selected by maximising F1 on val predictions.
+
+    Parameters
+    ----------
+    train_subset : torch.utils.data.Subset
+    test_subset : torch.utils.data.Subset
+    params : dict
+    device : torch.device
+    save_path : str
+    val_prop : float
+    o_load : bool
+
+    Returns
+    -------
+    metrics : dict
+    """
+    inner_train, inner_val = make_val_split(train_subset, val_prop=val_prop)
+    print(
+        f"  inner split -- train={len(inner_train)}"
+        f"  val={len(inner_val)}  test={len(test_subset)} instances"
+    )
+
+    mean, std = compute_norm_stats(inner_train)
+    train_norm = NormSubset(inner_train, mean, std)
+    val_norm = NormSubset(inner_val, mean, std)
+    test_norm = NormSubset(test_subset, mean, std)
+
+    pin = device.type == 'cuda'
+    train_loader = DataLoader(
+        train_norm, batch_size=params['batch_size'],
+        shuffle=True, num_workers=0, pin_memory=pin,
+    )
+    val_loader = DataLoader(
+        val_norm, batch_size=params['batch_size'],
+        shuffle=False, num_workers=0, pin_memory=pin,
+    )
+    test_loader = DataLoader(
+        test_norm, batch_size=params['batch_size'],
+        shuffle=False, num_workers=0, pin_memory=pin,
+    )
+
+    model = build_model(params, device)
+
+    if o_load:
+        model.load_state_dict(
+            torch.load(save_path + '_best.pth', map_location=device)
+        )
+    else:
+        pos_weight = compute_pos_weight(inner_train).to(device)
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=params['lr'],
+            weight_decay=params['weight_decay'],
+        )
+        # negate auprc so ReduceLROnPlateau minimises the negated value
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', patience=5, factor=0.5,
         )
 
-        self.downsample = (
-            nn.Conv1d(n_inputs, n_outputs, kernel_size=1)
-            if n_inputs != n_outputs else None
+        model, _ = train(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            criterion=criterion,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            device=device,
+            epochs=params['epochs'],
+            patience=params['patience'],
+            save_path=save_path,
+            max_grad_norm=params.get('max_grad_norm', 1.0),
         )
-        self.act_out = nn.ReLU()
+        torch.save(model.state_dict(), save_path + '_final.pth')
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Parameters
-        ----------
-        x : torch.Tensor
-            Shape (batch, n_inputs, seq_len).
+    # find optimal threshold on val set, apply to test
+    from evaluator import find_optimal_threshold, evaluate_val_auprc
+    import numpy as np as _np
 
-        Returns
-        -------
-        out : torch.Tensor
-            Shape (batch, n_outputs, seq_len).
-        """
-        out = self.causal(x)
-        res = self.downsample(x) if self.downsample is not None else x
-        return self.act_out(out + res)
+    model.eval()
+    val_probs, val_labels = [], []
+    with torch.no_grad():
+        for signals, labels in val_loader:
+            probs = model(signals.to(device)).squeeze(1).sigmoid()
+            val_probs.extend(probs.cpu().numpy())
+            val_labels.extend(labels.numpy())
+    threshold = find_optimal_threshold(_np.array(val_labels), _np.array(val_probs))
+    print(f"  optimal threshold (val F1): {threshold:.4f}")
 
-
-# ============= TCN Backbone =============
-
-class TCN(nn.Module):
-    """
-    Stack of TemporalBlocks with exponentially increasing dilation.
-
-    Dilation at block i = 2^i. Receptive field:
-    RF = 1 + 2 * (kernel_size - 1) * sum(2^i for i in range(n_blocks)).
-
-    Parameters
-    ----------
-    n_inputs : int
-        Input channel count fed into the first block.
-    channel_list : list of int
-        Output channels per block. Length determines depth.
-    kernel_size : int
-    dropout : float
-    """
-
-    def __init__(
-        self,
-        n_inputs: int,
-        channel_list: list,
-        kernel_size: int = DEFAULT_KERNEL_SIZE,
-        dropout: float = DEFAULT_DROPOUT,
-    ):
-        super().__init__()
-        layers = []
-        for i, n_out in enumerate(channel_list):
-            n_in = n_inputs if i == 0 else channel_list[i - 1]
-            layers.append(TemporalBlock(n_in, n_out, kernel_size, dilation=2 ** i, dropout=dropout))
-        self.blocks = nn.Sequential(*layers)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Parameters
-        ----------
-        x : torch.Tensor
-            Shape (batch, n_inputs, seq_len).
-
-        Returns
-        -------
-        out : torch.Tensor
-            Shape (batch, channel_list[-1], seq_len).
-        """
-        return self.blocks(x)
+    return evaluate(model, test_loader, device, threshold=threshold)
 
 
-# ============= Full Model =============
+# ============= CLI =============
 
-class AggressionTCN(nn.Module):
-    """
-    Full TCN model for binary aggression prediction.
+def parse_arguments():
+    """Parses command-line arguments for the TCN pipeline."""
+    parser = argparse.ArgumentParser(
+        description='TCN pipeline for ASD aggression prediction'
+    )
+    parser.add_argument('--data_path', type=str, required=True)
+    parser.add_argument('--save_path', type=str, required=True)
+    parser.add_argument('--hyper', type=str, required=True)
+    parser.add_argument('--bin_size', type=int, default=15)
+    parser.add_argument('--num_observation_frames', type=int, default=12)
+    parser.add_argument('--num_prediction_frames', type=int, default=4)
+    parser.add_argument('--split', type=str, default='loso',
+                        choices=['loso', 'kfold', 'session'])
+    parser.add_argument('--n_splits', type=int, default=5)
+    parser.add_argument('--val_prop', type=float, default=0.2)
+    parser.add_argument('--cuda', action='store_true')
+    parser.add_argument('--gpu', type=int, default=0)
+    parser.add_argument('--multiclass', action='store_true', default=False)
+    parser.add_argument('--run_from_scratch', action='store_true', default=False)
+    parser.add_argument('--load', action='store_true', default=False)
+    return parser.parse_args()
 
-    Architecture:
-        1. Per-channel input projection (1x1 Conv): maps heterogeneous input
-           channels to a uniform hidden width before temporal processing.
-           This decouples amplitude-scale normalization from pattern learning.
-        2. TCN backbone: stacked dilated causal residual blocks.
-        3. Readout: collapses the temporal axis to a single vector.
-        4. Linear classifier: single logit for BCEWithLogitsLoss.
 
-    Input:  (batch, n_input_channels, seq_len)
-            seq_len = num_observation_frames * target_fs * bin_size = 2880 at defaults.
-    Output: (batch, 1) -- raw logit, no sigmoid applied.
+def _print_fold_metrics(metrics):
+    print(
+        f"  auprc={metrics['auprc']:.4f}  "
+        f"auc={metrics['auc_roc']:.4f}  "
+        f"f1={metrics['f1_binary']:.4f}  "
+        f"sens={metrics['sensitivity']:.4f}  "
+        f"spec={metrics['specificity']:.4f}  "
+        f"thresh={metrics['threshold']:.4f}"
+    )
 
-    Parameters
-    ----------
-    n_input_channels : int
-        Number of biosignal channels. Must match len(selected_feat) = 10.
-    channel_list : list of int
-        Per-block output channel sizes. Controls depth and width.
-    kernel_size : int
-    dropout : float
-    readout : str
-        How to collapse the temporal axis after the TCN backbone.
-        'last'         -- output at the final time step (fully causal).
-        'mean'         -- mean over all time steps.
-        'adaptive_max' -- AdaptiveMaxPool1d(1), captures peak activation.
-    """
 
-    def __init__(
-        self,
-        n_input_channels: int = N_INPUT_CHANNELS,
-        channel_list: list = None,
-        kernel_size: int = DEFAULT_KERNEL_SIZE,
-        dropout: float = DEFAULT_DROPOUT,
-        readout: str = DEFAULT_READOUT,
-    ):
-        super().__init__()
-        channel_list = channel_list if channel_list is not None else DEFAULT_CHANNEL_LIST
+def _save_metrics(all_metrics, path):
+    serializable = {
+        fold: {
+            k: v.tolist() if hasattr(v, 'tolist') else v
+            for k, v in m.items()
+        }
+        for fold, m in all_metrics.items()
+    }
+    with open(path, 'w') as f:
+        json.dump(serializable, f, indent=2)
 
-        if readout not in ('last', 'mean', 'adaptive_max'):
-            raise ValueError(f"readout must be 'last', 'mean', or 'adaptive_max', got '{readout}'")
 
-        # per-channel input projection: maps n_input_channels -> channel_list[0]
-        # 1x1 conv learns an independent linear combination per output channel
-        # without mixing temporal information at this stage
-        self.input_proj = nn.Conv1d(n_input_channels, channel_list[0], kernel_size=1)
+if __name__ == '__main__':
+    start = timeit.default_timer()
+    args = parse_arguments()
 
-        # TCN receives channel_list[0] inputs; first block has no downsample
-        self.tcn = TCN(channel_list[0], channel_list, kernel_size, dropout)
+    set_seed(SEED)
 
-        self.readout = readout
-        self._pool = nn.AdaptiveMaxPool1d(1) if readout == 'adaptive_max' else None
+    if args.cuda and not torch.cuda.is_available():
+        print("CUDA not available, proceeding on CPU")
+        args.cuda = False
 
-        # single logit output for BCEWithLogitsLoss
-        self.classifier = nn.Linear(channel_list[-1], 1)
+    device = torch.device(f'cuda:{args.gpu}' if args.cuda else 'cpu')
+    print(f"device: {device}")
 
-    @property
-    def receptive_field(self) -> int:
-        """Receptive field in input samples, computed from TCN block padding."""
-        rf = 1
-        for block in self.tcn.blocks:
-            # each block has two causal convs, each adding causal_pad to each side
-            causal_pad = block.causal[1].chomp_size  # Chomp1d is index 1 in Sequential
-            rf += 2 * causal_pad
-        return rf
+    with open(args.hyper, 'r') as f:
+        params = json.load(f)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Parameters
-        ----------
-        x : torch.Tensor
-            Shape (batch, n_input_channels, seq_len).
+    print("loading dataset...")
+    dataset = ASDAggressionDataset(
+        data_path=args.data_path,
+        bin_size=args.bin_size,
+        num_observation_frames=args.num_observation_frames,
+        num_prediction_frames=args.num_prediction_frames,
+        o_multiclass=args.multiclass,
+        o_run_from_scratch=args.run_from_scratch,
+    )
+    print(f"dataset loaded: {len(dataset)} instances")
 
-        Returns
-        -------
-        logits : torch.Tensor
-            Shape (batch, 1). Raw unnormalized score; apply sigmoid for probability.
-        """
-        x = self.input_proj(x)              # (batch, channel_list[0], seq_len)
-        x = self.tcn(x)                     # (batch, channel_list[-1], seq_len)
+    os.makedirs(args.save_path, exist_ok=True)
+    all_metrics = {}
 
-        if self.readout == 'last':
-            x = x[:, :, -1]
-        elif self.readout == 'mean':
-            x = x.mean(dim=2)
-        elif self.readout == 'adaptive_max':
-            x = self._pool(x).squeeze(2)
+    # ── LOSO ──────────────────────────────────────────────────────────────────
+    if args.split == 'loso':
+        for test_pid, train_subset, test_subset in loso_splits(dataset):
+            print(f"\n=== LOSO fold: test participant {test_pid} ===")
+            fold_dir = os.path.join(args.save_path, f'pid_{test_pid}')
+            os.makedirs(fold_dir, exist_ok=True)
+            prefix = os.path.join(fold_dir, f'pid_{test_pid}')
 
-        return self.classifier(x)           # (batch, 1)
+            metrics = run_fold(
+                train_subset, test_subset, params, device, prefix,
+                val_prop=args.val_prop, o_load=args.load,
+            )
+            all_metrics[str(test_pid)] = metrics
+            _print_fold_metrics(metrics)
+
+    # ── K-Fold ────────────────────────────────────────────────────────────────
+    elif args.split == 'kfold':
+        for fold, train_subset, test_subset in kfold_participant_splits(
+            dataset, n_splits=args.n_splits
+        ):
+            print(f"\n=== K-Fold: fold {fold} ===")
+            fold_dir = os.path.join(args.save_path, f'fold_{fold}')
+            os.makedirs(fold_dir, exist_ok=True)
+            prefix = os.path.join(fold_dir, f'fold_{fold}')
+
+            metrics = run_fold(
+                train_subset, test_subset, params, device, prefix,
+                val_prop=args.val_prop, o_load=args.load,
+            )
+            all_metrics[f'fold_{fold}'] = metrics
+            _print_fold_metrics(metrics)
+
+    # ── Session ───────────────────────────────────────────────────────────────
+    elif args.split == 'session':
+        print("\n=== session split ===")
+        train_subset, test_subset = session_splits(dataset)
+        prefix = os.path.join(args.save_path, 'session_model')
+
+        metrics = run_fold(
+            train_subset, test_subset, params, device, prefix,
+            val_prop=args.val_prop, o_load=args.load,
+        )
+        all_metrics['session'] = metrics
+        _print_fold_metrics(metrics)
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    summary = summarize_metrics(all_metrics)
+    print("\n=== aggregate summary ===")
+    for k, v in summary.items():
+        print(f"  {k}: {v:.4f}")
+
+    metrics_out = os.path.join(args.save_path, 'all_metrics.json')
+    _save_metrics(all_metrics, metrics_out)
+    print(f"\nmetrics saved to {metrics_out}")
+
+    end = timeit.default_timer()
+    print(f"total time: {(end - start) / 60:.2f} minutes")

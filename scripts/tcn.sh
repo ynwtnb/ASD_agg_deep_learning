@@ -2,12 +2,12 @@
 #SBATCH -J tcn_training
 #SBATCH -N 1
 #SBATCH -n 10
-#SBATCH --time=8:00:00
+#SBATCH --time=2:00:00
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
 #SBATCH -o output_tcn_%j.txt
 #SBATCH -e error_tcn_%j.txt
-#SBATCH --mail-user=watanabe.y@northeastern.edu
+#SBATCH --mail-user=borasaniya.t@northeastern.edu
 #SBATCH --mail-type=ALL
 
 DATA_PATH="/scratch/borasaniya.t/CBS_DATA_ASD_ONLY/"
@@ -15,7 +15,7 @@ SAVE_PATH="../experiments/results/tcn"
 HYPER_PATH="../models/tcn/default_parameters.json"
 BIN_SIZE=15
 N_OBS_FRAMES=12
-N_PRED_FRAMES=4
+N_PRED_FRAMES=12
 SPLIT="loso"
 N_SPLITS=5
 VAL_PROP=0.2
