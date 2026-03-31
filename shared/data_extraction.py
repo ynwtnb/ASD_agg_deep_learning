@@ -125,12 +125,12 @@ def data_extraction(dir, bin_size, agg_cat, o_run_from_scratch=False, o_multicla
 
     if not os.path.isfile(feature_file_name) or o_run_from_scratch:
         data_dict = data_extraction_csv_dir(dir, bin_size, agg_cat, path_style='/', print_progress=print_progress)
-        pickle_out = open(feature_file_name, 'wb')
-        pickle.dump(data_dict, pickle_out)
+        with open(feature_file_name, 'wb') as pickle_out:
+            pickle.dump(data_dict, pickle_out)
     else:
         print('loading data...')
-        pickle_in = open(feature_file_name, 'rb')
-        data_dict = pickle.load(pickle_in)
+        with open(feature_file_name, 'rb') as pickle_in:
+            data_dict = pickle.load(pickle_in)
     uids = list(data_dict.keys())
     uid_dict = {i: uids[i] for i in range(len(uids))}
     return data_dict, uid_dict
@@ -423,8 +423,8 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
     if (not o_run_from_scratch) and os.path.isfile(filename):
         # load file
         print('loading data instance data...')
-        pickle_in = open(filename, 'rb')
-        datalist = pickle.load(pickle_in)
+        with open(filename, 'rb') as pickle_in:
+            datalist = pickle.load(pickle_in)
         dict_of_instances_arrays, dict_of_labels_arrays, dict_of_session_id_arrays, id_blacklist, dict_of_superposition_lists, signal_cols, dict_of_session_dfs = datalist
     else:
         # loops over each subject
@@ -511,8 +511,8 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
                 print('Not possible to construct data for sbj ' + subject_id)
 
         datalist = [dict_of_instances_arrays, dict_of_labels_arrays, dict_of_session_id_arrays, id_blacklist, dict_of_superposition_lists, signal_cols, dict_of_session_dfs]
-        pickle_out = open(filename, 'wb')
-        pickle.dump(datalist, pickle_out)
+        with open(filename, 'wb') as pickle_out:
+            pickle.dump(datalist, pickle_out)
 
     return dict_of_instances_arrays, dict_of_labels_arrays, dict_of_session_id_arrays, id_blacklist, dict_of_superposition_lists, signal_cols, dict_of_session_dfs
 
