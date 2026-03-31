@@ -497,11 +497,19 @@ def gen_instances_from_raw_feat_dictionary(feat_dict, num_observation_frames, nu
                     dict_of_superposition_lists[subject_id] = sup_list
 
                 if o_return_list_of_sessions:
+                    if len(instances_array_per_subject_list) == 0:
+                        print(f"No valid instances for subject {subject_id}, skipping.")
+                        id_blacklist.append(subject_id)
+                        continue
                     dict_of_instances_arrays[subject_id] = instances_array_per_subject_list
                     dict_of_labels_arrays[subject_id] = labels_array_per_subject_list
                     dict_of_session_dfs[subject_id] = dfs_array_per_subject_list
                     dict_of_session_id_arrays[subject_id] = session_id_array_per_subject_list
                 else:
+                    if len(instances_array_per_subject) == 0:
+                        print(f"No valid instances for subject {subject_id}, skipping.")
+                        id_blacklist.append(subject_id)
+                        continue
                     dict_of_instances_arrays[subject_id] = instances_array_per_subject
                     dict_of_labels_arrays[subject_id] = labels_array_per_subject
                     dict_of_session_id_arrays[subject_id] = session_id_array_per_subject
