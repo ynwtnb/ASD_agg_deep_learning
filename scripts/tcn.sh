@@ -22,7 +22,7 @@ VAL_PROP=0.2
 GPU=0
 
 module load miniconda3/25.9.1
-conda activate asd_agg_dl
+source activate asd_agg_dl
 
 python ../models/tcn/pipeline.py \
     --data_path $DATA_PATH \
