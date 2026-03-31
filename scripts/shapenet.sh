@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J data_extraction                            # Job name
 #SBATCH -N 1                                # Number of nodes
-#SBATCH -n 10                               # Number of tasks
+#SBATCH -n 3                               # Number of tasks
 #SBATCH --time=1:00:00                      # Time limit (HH:MM:SS)
 #SBATCH --partition=short                   # Partition
 #SBATCH -o output_shapenet_%j.txt                    # Standard output file
@@ -20,6 +20,6 @@ SPLIT="kfold"
 N_SPLITS=1
 GPU=0
 
-module load miniconda3/25.9.1
 conda activate asd_agg_dl
+export PATH="/home/watanabe.y/.conda/envs/asd_agg_dl/bin:$PATH"
 python ../models/shapenet/pipeline.py --data_path $DATA_PATH --save_path $SAVE_PATH --hyper $HYPER_PATH --bin_size $BIN_SIZE --num_observation_frames $N_OBS_FRAMES --num_prediction_frames $N_PRED_FRAMES --cluster_num $CLUSTER_NUM --split $SPLIT --n_splits $N_SPLITS --cuda --gpu $GPU
