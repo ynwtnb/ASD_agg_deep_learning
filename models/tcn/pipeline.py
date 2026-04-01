@@ -23,7 +23,7 @@ from dataset import ASDAggressionDataset
 from splitters import loso_splits, kfold_participant_splits, session_splits
 from tcn import AggressionTCN
 from trainer import train
-from evaluator import evaluate, summarize_metrics
+from evaluator import evaluate, summarize_metrics, find_optimal_threshold
 
 
 # ============= Reproducibility =============

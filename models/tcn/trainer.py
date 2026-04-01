@@ -3,8 +3,6 @@ Training loop utilities for the TCN aggression prediction model.
 """
 
 import json
-import os
-import sys
 from copy import deepcopy
 
 import torch
@@ -143,12 +141,13 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
         'val_loss': [], 'val_acc': [], 'val_auprc': [],
     }
 
+    evaluate_val_auprc = _get_evaluator()
+
     for epoch in range(epochs):
         train_loss, train_acc = train_one_epoch(
             model, train_loader, optimizer, criterion, device, max_grad_norm
         )
         val_loss, val_acc = validate(model, val_loader, criterion, device)
-        evaluate_val_auprc = _get_evaluator()
         val_auprc = evaluate_val_auprc(model, val_loader, device)
 
         if scheduler is not None:
