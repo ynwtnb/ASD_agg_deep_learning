@@ -14,7 +14,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../shared'))
+SHARED_DIR = os.path.join(os.path.dirname(__file__), '../../shared')
+TCN_DIR = os.path.dirname(__file__)
+sys.path.insert(0, SHARED_DIR)
+sys.path.insert(0, TCN_DIR)
 
 from dataset import ASDAggressionDataset
 from splitters import loso_splits, kfold_participant_splits, session_splits
@@ -280,8 +283,6 @@ def run_fold(train_subset, test_subset, params, device, save_path,
         torch.save(model.state_dict(), save_path + '_final.pth')
 
     # find optimal threshold on val set, apply to test
-    from evaluator import find_optimal_threshold
-
     model.eval()
     val_probs, val_labels = [], []
     with torch.no_grad():

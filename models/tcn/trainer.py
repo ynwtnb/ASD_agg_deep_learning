@@ -3,11 +3,17 @@ Training loop utilities for the TCN aggression prediction model.
 """
 
 import json
+import os
+import sys
 from copy import deepcopy
 
 import torch
 
-from evaluator import evaluate_val_auprc
+
+def _get_evaluator():
+    """Lazily imports evaluate_val_auprc to avoid sys.path dependency at module load time."""
+    from evaluator import evaluate_val_auprc
+    return evaluate_val_auprc
 
 
 def train_one_epoch(model, loader, optimizer, criterion, device, max_grad_norm=1.0):
@@ -40,7 +46,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device, max_grad_norm=1
         labels = labels.to(device)
 
         optimizer.zero_grad()
-        logits = model(signals).squeeze(1)
+        logits = model(signals).squeeze(1)          # (batch,)
         loss = criterion(logits, labels.float())
         loss.backward()
 
@@ -82,7 +88,7 @@ def validate(model, loader, criterion, device):
             signals = signals.to(device)
             labels = labels.to(device)
 
-            logits = model(signals).squeeze(1)
+            logits = model(signals).squeeze(1)      # (batch,)
             loss = criterion(logits, labels.float())
 
             preds = (logits.sigmoid() > 0.5).long()
@@ -142,6 +148,7 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
             model, train_loader, optimizer, criterion, device, max_grad_norm
         )
         val_loss, val_acc = validate(model, val_loader, criterion, device)
+        evaluate_val_auprc = _get_evaluator()
         val_auprc = evaluate_val_auprc(model, val_loader, device)
 
         if scheduler is not None:
