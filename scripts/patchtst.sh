@@ -24,6 +24,7 @@ GPU=0
 module load miniconda3/25.9.1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate asd_agg_dl
+export PYTHONPATH="$(realpath ../shared):$PYTHONPATH"
 
 python ../models/patchtst/pipeline.py \
     --data_path $DATA_PATH \
