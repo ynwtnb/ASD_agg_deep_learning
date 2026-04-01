@@ -2,7 +2,7 @@
 #SBATCH -J data_extraction                            # Job name
 #SBATCH -N 1                                # Number of nodes
 #SBATCH -n 1                                # Number of tasks
-#SBATCH --time=1:00:00                      # Time limit (HH:MM:SS)
+#SBATCH --time=2:00:00                      # Time limit (HH:MM:SS)
 #SBATCH --partition=short                   # Partition
 #SBATCH -o output_%j.txt                    # Standard output file
 #SBATCH -e error_%j.txt                     # Standard error file

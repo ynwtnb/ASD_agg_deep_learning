@@ -9,4 +9,9 @@ dependencies:
   - peakutils
   - ipywidgets
   - nbformat
+  - scikit-learn
+  - pytorch
+  - joblib
+  - pandas
+  - tqdm
 prefix: /home/watanabe.y/miniconda3/envs/asd_agg_dl
