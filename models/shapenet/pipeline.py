@@ -7,8 +7,10 @@ import numpy as np
 import argparse
 import timeit
 
+# Allow imports from shapenet models dir (must come before shared/ to avoid shadowing)
+sys.path.insert(0, os.path.dirname(__file__))
 # Allow imports from shared/
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../shared'))
+sys.path.insert(1, os.path.join(os.path.dirname(__file__), '../../shared'))
 
 import wrappers
 from dataset import ASDAggressionDataset
