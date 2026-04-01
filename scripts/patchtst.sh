@@ -22,6 +22,7 @@ N_SPLITS=1
 GPU=0
 
 module load miniconda3/25.9.1
+source $(conda info --base)/etc/profile.d/conda.sh
 conda activate asd_agg_dl
 
 python ../models/patchtst/pipeline.py \
