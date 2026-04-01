@@ -280,8 +280,7 @@ def run_fold(train_subset, test_subset, params, device, save_path,
         torch.save(model.state_dict(), save_path + '_final.pth')
 
     # find optimal threshold on val set, apply to test
-    from evaluator import find_optimal_threshold, evaluate_val_auprc
-    import numpy as np as _np
+    from evaluator import find_optimal_threshold
 
     model.eval()
     val_probs, val_labels = [], []
@@ -290,7 +289,7 @@ def run_fold(train_subset, test_subset, params, device, save_path,
             probs = model(signals.to(device)).squeeze(1).sigmoid()
             val_probs.extend(probs.cpu().numpy())
             val_labels.extend(labels.numpy())
-    threshold = find_optimal_threshold(_np.array(val_labels), _np.array(val_probs))
+    threshold = find_optimal_threshold(np.array(val_labels), np.array(val_probs))
     print(f"  optimal threshold (val F1): {threshold:.4f}")
 
     return evaluate(model, test_loader, device, threshold=threshold)
