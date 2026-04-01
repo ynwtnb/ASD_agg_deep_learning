@@ -1,3 +1,7 @@
+"""
+End-to-end supervised TCN training and evaluation pipeline for ASD aggression prediction.
+"""
+
 import argparse
 import json
 import os
@@ -19,6 +23,21 @@ from trainer import train
 from evaluator import evaluate, summarize_metrics
 
 
+# ============= Reproducibility =============
+
+SEED = 42
+
+
+def set_seed(seed):
+    """Sets Python, NumPy, and PyTorch seeds for reproducibility."""
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 # ============= Normalization =============
 
 class NormSubset(Subset):
@@ -33,9 +52,9 @@ class NormSubset(Subset):
     ----------
     subset : torch.utils.data.Subset
     mean : np.ndarray, shape (C,)
-        Per-channel mean computed from the training split.
+        Per-channel mean computed from the inner training split.
     std : np.ndarray, shape (C,)
-        Per-channel std computed from the training split.
+        Per-channel std computed from the inner training split.
     """
 
     def __init__(self, subset, mean, std):
@@ -105,7 +124,6 @@ def make_val_split(train_subset, val_prop=0.2):
     ----------
     train_subset : torch.utils.data.Subset
     val_prop : float
-        Proportion of each session held back as validation.
 
     Returns
     -------
@@ -135,7 +153,6 @@ def make_val_split(train_subset, val_prop=0.2):
 
             n = len(sess_idx)
             if n < 4:
-                # session too short to split safely; keep all in training
                 inner_train_idx.extend(sess_idx.tolist())
                 continue
 
@@ -184,9 +201,10 @@ def run_fold(train_subset, test_subset, params, device, save_path,
     """
     Executes one train/evaluate cycle for a single fold.
 
-    An inner chronological val split is created from train_subset using
+    An inner chronological val split is created from train_subset via
     make_val_split. Normalization stats and pos_weight are derived from the
     inner training split only. The test_subset is never touched during training.
+    Threshold for test evaluation is selected by maximising F1 on val predictions.
 
     Parameters
     ----------
@@ -195,18 +213,14 @@ def run_fold(train_subset, test_subset, params, device, save_path,
     params : dict
     device : torch.device
     save_path : str
-        File path prefix for checkpoints and history.
     val_prop : float
-        Proportion of each training session used for inner validation.
     o_load : bool
-        If True, loads the best saved checkpoint and skips training.
 
     Returns
     -------
     metrics : dict
     """
     inner_train, inner_val = make_val_split(train_subset, val_prop=val_prop)
-
     print(
         f"  inner split -- train={len(inner_train)}"
         f"  val={len(inner_val)}  test={len(test_subset)} instances"
@@ -245,6 +259,7 @@ def run_fold(train_subset, test_subset, params, device, save_path,
             lr=params['lr'],
             weight_decay=params['weight_decay'],
         )
+        # negate auprc so ReduceLROnPlateau minimises the negated value
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', patience=5, factor=0.5,
         )
@@ -260,10 +275,24 @@ def run_fold(train_subset, test_subset, params, device, save_path,
             epochs=params['epochs'],
             patience=params['patience'],
             save_path=save_path,
+            max_grad_norm=params.get('max_grad_norm', 1.0),
         )
         torch.save(model.state_dict(), save_path + '_final.pth')
 
-    return evaluate(model, test_loader, device)
+    # find optimal threshold on val set, apply to test
+    from evaluator import find_optimal_threshold
+
+    model.eval()
+    val_probs, val_labels = [], []
+    with torch.no_grad():
+        for signals, labels in val_loader:
+            probs = model(signals.to(device)).squeeze(1).sigmoid()
+            val_probs.extend(probs.cpu().numpy())
+            val_labels.extend(labels.numpy())
+    threshold = find_optimal_threshold(np.array(val_labels), np.array(val_probs))
+    print(f"  optimal threshold (val F1): {threshold:.4f}")
+
+    return evaluate(model, test_loader, device, threshold=threshold)
 
 
 # ============= CLI =============
@@ -273,43 +302,36 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description='TCN pipeline for ASD aggression prediction'
     )
-    parser.add_argument('--data_path', type=str, required=True,
-                        help='path to the dataset directory')
-    parser.add_argument('--save_path', type=str, required=True,
-                        help='directory where models and results are saved')
-    parser.add_argument('--hyper', type=str, required=True,
-                        help='path to JSON hyperparameter file')
+    parser.add_argument('--data_path', type=str, required=True)
+    parser.add_argument('--save_path', type=str, required=True)
+    parser.add_argument('--hyper', type=str, required=True)
     parser.add_argument('--bin_size', type=int, default=15)
     parser.add_argument('--num_observation_frames', type=int, default=12)
     parser.add_argument('--num_prediction_frames', type=int, default=4)
     parser.add_argument('--split', type=str, default='loso',
                         choices=['loso', 'kfold', 'session'])
-    parser.add_argument('--n_splits', type=int, default=5,
-                        help='number of folds for kfold')
-    parser.add_argument('--val_prop', type=float, default=0.2,
-                        help='proportion of each session used for inner validation')
+    parser.add_argument('--n_splits', type=int, default=5)
+    parser.add_argument('--val_prop', type=float, default=0.2)
     parser.add_argument('--cuda', action='store_true')
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--multiclass', action='store_true', default=False)
     parser.add_argument('--run_from_scratch', action='store_true', default=False)
-    parser.add_argument('--load', action='store_true', default=False,
-                        help='load saved checkpoint instead of training')
+    parser.add_argument('--load', action='store_true', default=False)
     return parser.parse_args()
 
 
 def _print_fold_metrics(metrics):
-    """Prints a one-line metric summary for a completed fold."""
     print(
-        f"  acc={metrics['accuracy']:.4f}  "
-        f"f1={metrics['f1_binary']:.4f}  "
+        f"  auprc={metrics['auprc']:.4f}  "
         f"auc={metrics['auc_roc']:.4f}  "
+        f"f1={metrics['f1_binary']:.4f}  "
         f"sens={metrics['sensitivity']:.4f}  "
-        f"spec={metrics['specificity']:.4f}"
+        f"spec={metrics['specificity']:.4f}  "
+        f"thresh={metrics['threshold']:.4f}"
     )
 
 
 def _save_metrics(all_metrics, path):
-    """Serializes metrics dict to JSON, converting numpy types."""
     serializable = {
         fold: {
             k: v.tolist() if hasattr(v, 'tolist') else v
@@ -324,6 +346,8 @@ def _save_metrics(all_metrics, path):
 if __name__ == '__main__':
     start = timeit.default_timer()
     args = parse_arguments()
+
+    set_seed(SEED)
 
     if args.cuda and not torch.cuda.is_available():
         print("CUDA not available, proceeding on CPU")
@@ -353,7 +377,6 @@ if __name__ == '__main__':
     if args.split == 'loso':
         for test_pid, train_subset, test_subset in loso_splits(dataset):
             print(f"\n=== LOSO fold: test participant {test_pid} ===")
-
             fold_dir = os.path.join(args.save_path, f'pid_{test_pid}')
             os.makedirs(fold_dir, exist_ok=True)
             prefix = os.path.join(fold_dir, f'pid_{test_pid}')
@@ -371,7 +394,6 @@ if __name__ == '__main__':
             dataset, n_splits=args.n_splits
         ):
             print(f"\n=== K-Fold: fold {fold} ===")
-
             fold_dir = os.path.join(args.save_path, f'fold_{fold}')
             os.makedirs(fold_dir, exist_ok=True)
             prefix = os.path.join(fold_dir, f'fold_{fold}')
@@ -387,8 +409,8 @@ if __name__ == '__main__':
     elif args.split == 'session':
         print("\n=== session split ===")
         train_subset, test_subset = session_splits(dataset)
-
         prefix = os.path.join(args.save_path, 'session_model')
+
         metrics = run_fold(
             train_subset, test_subset, params, device, prefix,
             val_prop=args.val_prop, o_load=args.load,
