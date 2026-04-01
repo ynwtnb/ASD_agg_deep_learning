@@ -2,8 +2,9 @@
 #SBATCH -J data_extraction                            # Job name
 #SBATCH -N 1                                # Number of nodes
 #SBATCH -n 3                               # Number of tasks
-#SBATCH --time=1:00:00                      # Time limit (HH:MM:SS)
+#SBATCH --time=2:00:00                      # Time limit (HH:MM:SS)
 #SBATCH --partition=short                   # Partition
+#SBATCH --mem=48G                           # Memory per node
 #SBATCH -o output_shapenet_%j.txt                    # Standard output file
 #SBATCH -e error_shapenet_%j.txt                     # Standard error file
 #SBATCH --mail-user=$watanabe.y@northeastern.edu  # Email
@@ -17,7 +18,7 @@ N_OBS_FRAMES=12
 N_PRED_FRAMES=12
 CLUSTER_NUM=10
 SPLIT="kfold"
-N_SPLITS=1
+N_SPLITS=2
 GPU=0
 
 module load miniconda3/25.9.1
