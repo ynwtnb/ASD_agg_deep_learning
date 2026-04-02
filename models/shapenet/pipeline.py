@@ -90,7 +90,7 @@ def fit_parameters(file, train, train_labels, test, test_labels, cuda, gpu,
     with open(file, 'r') as hf:
         params = json.load(hf)
 
-    params['in_channels'] = train.shape[1]  # number of signal channels
+    params['in_channels'] = 1  # ShapeNet flattens channels: each channel is treated as an independent univariate series
     params['cuda'] = cuda
     params['gpu'] = gpu
     classifier.set_params(**params)
