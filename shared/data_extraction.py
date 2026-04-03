@@ -331,7 +331,7 @@ def split_data_into_bins(df, evidence, bin_df, bin_labels, target_fs=16, bin_siz
         Per-bin max aggression label.
     """
     samples_per_bin = target_fs * bin_size
-    resample_period = f'{1000 // target_fs}ms'
+    resample_period = pd.Timedelta(seconds=1 / target_fs)
 
     signal_resampled = df[evidence].astype(float).resample(resample_period).mean().interpolate()
     labels_resampled = df['Condition'].astype(float).resample(resample_period).max().fillna(0)

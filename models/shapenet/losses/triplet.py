@@ -34,7 +34,8 @@ class PNTripletLoss(torch.nn.modules.loss._Loss):
          encode_num = int(alpha * 10)
 
          # do the cluster for the slided time series
-         points = batch_slide.numpy()
+         device = batch_slide.device
+         points = batch_slide.cpu().numpy()
          num_cluster = 2
          kmeans = KMeans(n_clusters = num_cluster)
          kmeans.fit(points)
@@ -62,7 +63,7 @@ class PNTripletLoss(torch.nn.modules.loss._Loss):
              anchor_positive = numpy.argpartition(distance_i, num_positive)[:(num_positive+1)]
 
              # torch anchor
-             representation_anc = torch.from_numpy(points[anchor_positive[0]])
+             representation_anc = torch.from_numpy(points[anchor_positive[0]]).to(device)
              # transfer 1D to 3D
              representation_anc = torch.reshape(representation_anc, (1,1,numpy.shape(points)[1]))
 
@@ -72,7 +73,7 @@ class PNTripletLoss(torch.nn.modules.loss._Loss):
              # positive part
              for l in range(1,num_positive+1):
                  # torch positive
-                 representation_pos = torch.from_numpy(points[anchor_positive[l]])
+                 representation_pos = torch.from_numpy(points[anchor_positive[l]]).to(device)
                  # transfer 1D to 3D
                  representation_pos = torch.reshape(representation_pos, (1,1,numpy.shape(points)[1]))
 
@@ -96,11 +97,11 @@ class PNTripletLoss(torch.nn.modules.loss._Loss):
                              first_index = i
                              second_index = j
 
-                 representation_intra_pos_0 = torch.from_numpy(points[anchor_positive[first_index]])
+                 representation_intra_pos_0 = torch.from_numpy(points[anchor_positive[first_index]]).to(device)
                  representation_intra_pos_0 = torch.reshape(representation_intra_pos_0, (1,1,numpy.shape(points)[1]))
                  representation_intra_pos_0 = encoder(representation_intra_pos_0)
 
-                 representation_intra_pos_1 = torch.from_numpy(points[anchor_positive[second_index]])
+                 representation_intra_pos_1 = torch.from_numpy(points[anchor_positive[second_index]]).to(device)
                  representation_intra_pos_1 = torch.reshape(representation_intra_pos_1, (1,1,numpy.shape(points)[1]))
                  representation_intra_pos_1 = encoder(representation_intra_pos_1)
 
@@ -122,7 +123,7 @@ class PNTripletLoss(torch.nn.modules.loss._Loss):
                      negative_cluster_k = random.sample(range(points[kmeans.labels_ == k][:,0].size), num_negative_cluster_k)
                      for j in range(num_negative_cluster_k):
                          # torch negative
-                         representation_neg = torch.from_numpy(points[kmeans.labels_== k][negative_cluster_k[j]])
+                         representation_neg = torch.from_numpy(points[kmeans.labels_== k][negative_cluster_k[j]]).to(device)
                          # transfer 1D to 3D
                          representation_neg = torch.reshape(representation_neg, (1,1,numpy.shape(points)[1]))
 
@@ -147,11 +148,11 @@ class PNTripletLoss(torch.nn.modules.loss._Loss):
                                  first_index = i
                                  second_index = j
 
-                     representation_intra_neg_0 = torch.from_numpy(points[kmeans.labels_== k][negative_cluster_k[first_index]])
+                     representation_intra_neg_0 = torch.from_numpy(points[kmeans.labels_== k][negative_cluster_k[first_index]]).to(device)
                      representation_intra_neg_0 = torch.reshape(representation_intra_neg_0, (1,1,numpy.shape(points)[1]))
                      representation_intra_neg_0 = encoder(representation_intra_neg_0)
 
-                     representation_intra_neg_1 = torch.from_numpy(points[kmeans.labels_== k][negative_cluster_k[second_index]])
+                     representation_intra_neg_1 = torch.from_numpy(points[kmeans.labels_== k][negative_cluster_k[second_index]]).to(device)
                      representation_intra_neg_1 = torch.reshape(representation_intra_neg_1, (1,1,numpy.shape(points)[1]))
                      representation_intra_neg_1 = encoder(representation_intra_neg_1)
 

@@ -45,12 +45,51 @@ class ASDAggressionDataset(Dataset):
                 print_progress=False,
             )
         
-        # Flatten the dict_of_instances_arrays and dict_of_labels_arrays
-        self.instances = np.concatenate([np.concatenate(instances) for instances in self.dict_of_instances_arrays.values()], axis=0)
-        self.labels = np.concatenate([np.concatenate(labels) for labels in self.dict_of_labels_arrays.values()], axis=0)
-        self.session_ids = np.concatenate([np.concatenate(session_ids) for session_ids in self.dict_of_session_id_arrays.values()], axis=0)
-        self.superposition_lists = [np.concatenate(superposition_lists) for superposition_lists in self.dict_of_superposition_lists.values()]
-        self.participant_ids = np.concatenate([np.full(len(inst), pid) for pid, inst in self.dict_of_instances_arrays.items()], axis=0)
+        # Flatten all arrays, iterating over a shared key set to guarantee alignment.
+        # Only keep participants that have data in ALL four dicts.
+        valid_pids = (
+            self.dict_of_instances_arrays.keys()
+            & self.dict_of_labels_arrays.keys()
+            & self.dict_of_session_id_arrays.keys()
+            & self.dict_of_superposition_lists.keys()
+        )
+
+        n_channels = len(self.feat_col_names)
+        all_instances, all_labels, all_session_ids, all_superposition, all_pids = [], [], [], [], []
+        for pid in sorted(valid_pids):
+            inst = self.dict_of_instances_arrays[pid]
+            lbl = self.dict_of_labels_arrays[pid]      # (n,) or (n, pred_bins)
+            sid = self.dict_of_session_id_arrays[pid]  # (n,)
+            sup = self.dict_of_superposition_lists[pid]
+
+            n = len(lbl)
+            if n == 0:
+                continue
+
+            # Older cached data may store instances as 2D (n*C, T) instead of 3D (n, C, T).
+            if inst.ndim == 2:
+                inst = inst.reshape(n, n_channels, -1)
+
+            # Older cached data may store superposition as a flat list [p0,f0,p1,f1,...] of length 2n.
+            sup_arr = np.array(sup)
+            if sup_arr.ndim == 1 and len(sup_arr) == 2 * n:
+                sup_arr = sup_arr.reshape(n, 2)
+
+            assert inst.shape[0] == n and sid.shape[0] == n and len(sup_arr) == n, \
+                f"Participant {pid}: mismatched lengths — instances={inst.shape[0]}, labels={n}, " \
+                f"session_ids={sid.shape[0]}, superposition={len(sup_arr)}"
+
+            all_instances.append(inst)
+            all_labels.append(lbl)
+            all_session_ids.append(sid)
+            all_superposition.append(sup_arr)  # (n, 2): [past_overlap, future_overlap]
+            all_pids.append(np.full(n, pid))
+
+        self.instances = np.concatenate(all_instances, axis=0)
+        self.labels = np.concatenate(all_labels, axis=0)
+        self.session_ids = np.concatenate(all_session_ids, axis=0)
+        self.superposition_lists = all_superposition
+        self.participant_ids = np.concatenate(all_pids, axis=0)
         
     def __len__(self):
         return len(self.instances)
