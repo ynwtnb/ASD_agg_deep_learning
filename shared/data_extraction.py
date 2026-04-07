@@ -693,9 +693,6 @@ def generate_instances_from_data_bins(bin_df, bin_labels, n_obs_bins=12, n_pred_
     instances, labels = [], []
 
     for i in range(n_bins - n_obs_bins - n_pred_bins + 1):
-        if label_values[i:i + n_obs_bins].max() > 0:
-            continue  # skip: aggression already ongoing in observation window
-
         # Skip windows where any signal has missing bins (NaN from outer join)
         window = bin_df.iloc[i:i + n_obs_bins]
         if window.map(lambda v: not isinstance(v, np.ndarray)).any().any():
