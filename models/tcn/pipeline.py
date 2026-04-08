@@ -412,16 +412,16 @@ if __name__ == '__main__':
 
     # ── Session ───────────────────────────────────────────────────────────────
     elif args.split == 'session':
-        for _, train_subset, test_subset in session_splits(dataset):
-            print("\n=== session split ===")
-            prefix = os.path.join(args.save_path, 'session_model')
+        print("\n=== session split ===")
+        train_subset, test_subset = session_splits(dataset)
+        prefix = os.path.join(args.save_path, 'session_model')
 
-            metrics = run_fold(
-                train_subset, test_subset, params, device, prefix,
-                val_prop=args.val_prop, o_load=args.load,
-            )
-            all_metrics['session'] = metrics
-            _print_fold_metrics(metrics)
+        metrics = run_fold(
+            train_subset, test_subset, params, device, prefix,
+            val_prop=args.val_prop, o_load=args.load,
+        )
+        all_metrics['session'] = metrics
+        _print_fold_metrics(metrics)
 
     # ── Summary ───────────────────────────────────────────────────────────────
     summary = summarize_metrics(all_metrics)
