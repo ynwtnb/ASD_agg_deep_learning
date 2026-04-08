@@ -1,3 +1,4 @@
+import os
 import math
 import numpy
 import torch
@@ -201,7 +202,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
 
         return self.encoder
 
-    def fit(self, X, y, test, test_labels, prefix_file, cluster_num, save_memory=False, verbose=False):
+    def fit(self, X, y, test, test_labels, prefix_file, cluster_num, save_memory=False, verbose=False, use_cache=False):
         """
         Trains sequentially the encoder unsupervisedly and then the classifier
         using the given labels over the learned features.
@@ -216,33 +217,60 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                doing it after computing the whole loss.
         @param verbose Enables, if True, to monitor which epoch is running in
                the encoder training.
+        @param use_cache If True, load intermediate results from disk when
+               available and save them after each stage completes.
         """
         final_shapelet_num = 3
-        # Fitting encoder
-        t0 = timeit.default_timer()
-        self.encoder = self.fit_encoder(
-                                        X, y=y, save_memory=save_memory, verbose=verbose
-                                        )
-        print(f"[timing] encoder: {(timeit.default_timer()-t0)/60:.3f} min")
 
-        # shapelet discovery
-        t0 = timeit.default_timer()
-        shapelet, shapelet_dim, utility_sort_index = self.shapelet_discovery(X, y, cluster_num, batch_size=50)
-        print(f"[timing] discovery: {(timeit.default_timer()-t0)/60:.3f} min")
-        
-        self.save_shapelet(prefix_file, shapelet, shapelet_dim)
+        # ── Stage 1: Encoder ─────────────────────────────────────────────────
+        encoder_path = prefix_file + '_' + self.architecture + '_encoder.pth'
+        if use_cache and os.path.exists(encoder_path):
+            print(f"[cache] Loading encoder from {encoder_path}")
+            self.load_encoder(prefix_file)
+        else:
+            t0 = timeit.default_timer()
+            self.encoder = self.fit_encoder(X, y=y, save_memory=save_memory, verbose=verbose)
+            print(f"[timing] encoder: {(timeit.default_timer()-t0)/60:.3f} min")
+            self.save_encoder(prefix_file)
 
-        # shapelet transformation
-        t0 = timeit.default_timer()
-        features = self.shapelet_transformation(X, shapelet, shapelet_dim, utility_sort_index, final_shapelet_num)
-        print(f"[timing] transformation: {(timeit.default_timer()-t0)/60:.3f} min")
+        # ── Stage 2: Shapelet discovery ───────────────────────────────────────
+        # Save shapelet + shapelet_dim + utility_sort_index together so they
+        # stay consistent on resume.
+        shapelets_cache_path = prefix_file + '_shapelets.npz'
+        if use_cache and os.path.exists(shapelets_cache_path):
+            print(f"[cache] Loading shapelets from {shapelets_cache_path}")
+            data = numpy.load(shapelets_cache_path, allow_pickle=True)
+            shapelet = list(data['shapelet'])
+            shapelet_dim = list(data['shapelet_dim'])
+            utility_sort_index = data['utility_sort_index']
+        else:
+            t0 = timeit.default_timer()
+            shapelet, shapelet_dim, utility_sort_index = self.shapelet_discovery(X, y, cluster_num, batch_size=50)
+            print(f"[timing] discovery: {(timeit.default_timer()-t0)/60:.3f} min")
+            self.save_shapelet(prefix_file, shapelet, shapelet_dim)  # keep existing txt format
+            numpy.savez(
+                shapelets_cache_path,
+                shapelet=numpy.array(shapelet, dtype=object),
+                shapelet_dim=numpy.array(shapelet_dim),
+                utility_sort_index=utility_sort_index,
+            )
 
-        # SVM classifier training
+        # ── Stage 3: Shapelet transformation ─────────────────────────────────
+        features_cache_path = prefix_file + '_train_features.npy'
+        if use_cache and os.path.exists(features_cache_path):
+            print(f"[cache] Loading train features from {features_cache_path}")
+            features = numpy.load(features_cache_path)
+        else:
+            t0 = timeit.default_timer()
+            features = self.shapelet_transformation(X, shapelet, shapelet_dim, utility_sort_index, final_shapelet_num)
+            print(f"[timing] transformation: {(timeit.default_timer()-t0)/60:.3f} min")
+            numpy.save(features_cache_path, features)
+
+        # ── Stage 4: SVM (fast — no cache needed) ────────────────────────────
         t0 = timeit.default_timer()
         self.classifier = self.fit_svm_linear(features, y)
         print(f"[timing] SVM: {(timeit.default_timer()-t0)/60:.3f} min")
-        print("svm linear Accuracy: "+str(self.score(test, test_labels, shapelet, shapelet_dim, utility_sort_index, final_shapelet_num)))
-
+        print("svm linear Accuracy: " + str(self.score(test, test_labels, shapelet, shapelet_dim, utility_sort_index, final_shapelet_num)))
 
         return self
 
