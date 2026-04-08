@@ -16,9 +16,7 @@ import wrappers
 from dataset import ASDAggressionDataset
 from splitters import loso_splits, kfold_participant_splits, session_splits
 
-torch.backends.cudnn.allow_tf32 = True
-torch.backends.cuda.matmul.allow_tf32 = True
-
+torch.backends.cudnn.benchmark = True
 
 def set_seed(seed):
     random.seed(seed)
