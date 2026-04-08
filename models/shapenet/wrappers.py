@@ -26,7 +26,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
 
     def __init__(self, compared_length,
                  batch_size, epochs, lr,
-                 encoder, params, in_channels, cuda=False, gpu=0):
+                 encoder, params, in_channels, cuda=False, gpu=0, seed=42):
         self.architecture = ''
         self.cuda = cuda
         self.gpu = gpu
@@ -36,8 +36,9 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         self.encoder = encoder
         self.params = params
         self.in_channels = in_channels
+        self.seed = seed
         self.loss = losses.triplet.PNTripletLoss(
-            compared_length
+            compared_length, seed=seed
         )
         self.classifier = sklearn.svm.SVC()
         self.optimizer = torch.optim.Adam(self.encoder.parameters(), lr=lr)
@@ -167,8 +168,11 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
             train = train.cuda(self.gpu).float()
 
         train_torch_dataset = utils.Dataset(X)
+        generator = torch.Generator()
+        generator.manual_seed(self.seed)
         train_generator = torch.utils.data.DataLoader(
-            train_torch_dataset, batch_size=self.batch_size, shuffle=True
+            train_torch_dataset, batch_size=self.batch_size, shuffle=True,
+            generator=generator
         )
 
         #epochs = 0 # Number of performed epochs
@@ -341,7 +345,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         # cluster all the new representations
         t0 = timeit.default_timer()
         num_cluster = cluster_num
-        kmeans = KMeans(n_clusters = num_cluster)
+        kmeans = KMeans(n_clusters=num_cluster, random_state=self.seed)
         kmeans.fit(representation_all)
         print(f"  [discovery] KMeans: {(timeit.default_timer()-t0)/60:.3f} min")
 
@@ -498,7 +502,7 @@ class CausalCNNEncoderClassifier(TimeSeriesEncoderClassifier):
     def __init__(self, compared_length=50, batch_size=1, epochs=100, lr=0.001,
                  channels=10, depth=1,
                  reduced_size=10, out_channels=10, kernel_size=4,
-                 in_channels=1, cuda=False, gpu=0):
+                 in_channels=1, cuda=False, gpu=0, seed=42):
         super(CausalCNNEncoderClassifier, self).__init__(
             compared_length, batch_size,
             epochs, lr,
@@ -506,7 +510,7 @@ class CausalCNNEncoderClassifier(TimeSeriesEncoderClassifier):
                                   out_channels, kernel_size, cuda, gpu),
             self.__encoder_params(in_channels, channels, depth, reduced_size,
                                   out_channels, kernel_size),
-            in_channels, cuda, gpu
+            in_channels, cuda, gpu, seed
         )
         self.architecture = 'CausalCNN'
         self.channels = channels
@@ -613,14 +617,15 @@ class CausalCNNEncoderClassifier(TimeSeriesEncoderClassifier):
             'in_channels': self.in_channels,
             'out_channels': self.out_channels,
             'cuda': self.cuda,
-            'gpu': self.gpu
+            'gpu': self.gpu,
+            'seed': self.seed
         }
 
     def set_params(self, compared_length, batch_size, epochs, lr,
                    channels, depth, reduced_size, out_channels, kernel_size,
-                   in_channels, cuda, gpu):
+                   in_channels, cuda, gpu, seed=42):
         self.__init__(
             compared_length, batch_size, epochs, lr, channels, depth,
-            reduced_size, out_channels, kernel_size, in_channels, cuda, gpu
+            reduced_size, out_channels, kernel_size, in_channels, cuda, gpu, seed
         )
         return self

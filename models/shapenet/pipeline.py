@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import math
+import random
 import torch
 import numpy as np
 import argparse
@@ -17,6 +18,14 @@ from splitters import loso_splits, kfold_participant_splits, session_splits
 
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cuda.matmul.allow_tf32 = True
+
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 def load_dataset(data_path, bin_size, num_observation_frames, num_prediction_frames,
                  o_multiclass=False, o_run_from_scratch=False):
@@ -100,7 +109,7 @@ def normalize(train, test):
 
 
 def fit_parameters(file, train, train_labels, test, test_labels, cuda, gpu,
-                   save_path, cluster_num, save_memory=False, override_epochs=None):
+                   save_path, cluster_num, save_memory=False, override_epochs=None, seed=42):
     """
     Instantiates a CausalCNNEncoderClassifier from a JSON hyperparameter file,
     fits it on the training data, and returns the trained classifier.
@@ -129,6 +138,7 @@ def fit_parameters(file, train, train_labels, test, test_labels, cuda, gpu,
     params['in_channels'] = 1  # ShapeNet flattens channels: each channel is treated as an independent univariate series
     params['cuda'] = cuda
     params['gpu'] = gpu
+    params['seed'] = seed
     if override_epochs is not None:
         params['epochs'] = override_epochs
     classifier.set_params(**params)
@@ -177,6 +187,8 @@ def parse_arguments():
                         help='quick pipeline check: use only a tiny balanced subset per fold')
     parser.add_argument('--smoke_test_n', type=int, default=5,
                         help='samples per class when --smoke_test is set (default: 5)')
+    parser.add_argument('--seed', type=int, default=42,
+                        help='random seed for reproducibility (default: 42)')
 
     print('parse arguments succeed !!!')
     return parser.parse_args()
@@ -189,6 +201,9 @@ if __name__ == '__main__':
     if args.cuda and not torch.cuda.is_available():
         print("CUDA is not available, proceeding without it...")
         args.cuda = False
+
+    set_seed(args.seed)
+    print(f"Random seed set to {args.seed}")
 
     t0 = timeit.default_timer()
     print("Loading dataset...")
@@ -222,7 +237,7 @@ if __name__ == '__main__':
         classifier = fit_parameters(
             args.hyper, train, train_labels, test, test_labels,
             args.cuda, args.gpu, prefix, args.cluster_num,
-            override_epochs=1
+            override_epochs=1, seed=args.seed
         )
         print(f"[timing] fit_parameters (encoder+discovery+transform+svm): {(timeit.default_timer()-t0)/60:.3f} min")
         print("Smoke test passed.")
@@ -243,7 +258,8 @@ if __name__ == '__main__':
             if not args.load:
                 classifier = fit_parameters(
                     args.hyper, train, train_labels, test, test_labels,
-                    args.cuda, args.gpu, prefix, args.cluster_num
+                    args.cuda, args.gpu, prefix, args.cluster_num,
+                    seed=args.seed
                 )
                 classifier.save(prefix)
                 with open(prefix + '_parameters.json', 'w') as fp:
@@ -273,7 +289,8 @@ if __name__ == '__main__':
             if not args.load:
                 classifier = fit_parameters(
                     args.hyper, train, train_labels, test, test_labels,
-                    args.cuda, args.gpu, prefix, args.cluster_num
+                    args.cuda, args.gpu, prefix, args.cluster_num,
+                    seed=args.seed
                 )
                 classifier.save(prefix)
                 with open(prefix + '_parameters.json', 'w') as fp:
@@ -301,7 +318,8 @@ if __name__ == '__main__':
         if not args.load:
             classifier = fit_parameters(
                 args.hyper, train, train_labels, test, test_labels,
-                args.cuda, args.gpu, prefix, args.cluster_num
+                args.cuda, args.gpu, prefix, args.cluster_num,
+                seed=args.seed
             )
             classifier.save(prefix)
             with open(prefix + '_parameters.json', 'w') as fp:

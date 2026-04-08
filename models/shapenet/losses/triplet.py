@@ -10,11 +10,12 @@ import slide
 
 class PNTripletLoss(torch.nn.modules.loss._Loss):
 
-    def __init__(self, compared_length):
+    def __init__(self, compared_length, seed=42):
         super(PNTripletLoss, self).__init__()
         self.compared_length = compared_length
         if self.compared_length is None:
             self.compared_length = numpy.inf
+        self.seed = seed
 
     def forward(self, batch, encoder, params, save_memory=False):
 
@@ -34,7 +35,7 @@ class PNTripletLoss(torch.nn.modules.loss._Loss):
             # KMeans clustering on CPU
             points = batch_slide.cpu().numpy()
             num_cluster = 2
-            kmeans = KMeans(n_clusters=num_cluster)
+            kmeans = KMeans(n_clusters=num_cluster, random_state=self.seed)
             kmeans.fit(points)
             cluster_label = kmeans.labels_
             num_cluster_set = Counter(cluster_label)
