@@ -687,15 +687,18 @@ def generate_instances_from_data_bins(bin_df, bin_labels, n_obs_bins=12, n_pred_
         List of signal columns in the order they appear in the dataframe.
     instance_df : pd.DataFrame
     """
-    label_values = bin_labels.reindex(bin_df.index).fillna(0).values
+    # bin_df may have a MultiIndex (patient_id, session, Timestamp) while
+    # bin_labels has a plain DatetimeIndex — extract the Timestamp level for alignment
+    if isinstance(bin_df.index, pd.MultiIndex):
+        ts_index = bin_df.index.get_level_values('Timestamp')
+    else:
+        ts_index = bin_df.index
+    label_values = bin_labels.reindex(ts_index).fillna(0).values
     signal_cols = list(bin_df.columns)
     n_bins = len(bin_df)
     instances, labels = [], []
 
     for i in range(n_bins - n_obs_bins - n_pred_bins + 1):
-        if label_values[i:i + n_obs_bins].max() > 0:
-            continue  # skip: aggression already ongoing in observation window
-
         # Skip windows where any signal has missing bins (NaN from outer join)
         window = bin_df.iloc[i:i + n_obs_bins]
         if window.map(lambda v: not isinstance(v, np.ndarray)).any().any():
