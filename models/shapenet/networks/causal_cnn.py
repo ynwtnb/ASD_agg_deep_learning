@@ -59,7 +59,7 @@ class CausalConvolutionBlock(torch.nn.Module):
         padding = (kernel_size - 1) * dilation
 
         # First causal convolution
-        conv1 = torch.nn.utils.weight_norm(torch.nn.Conv1d(
+        conv1 = torch.nn.utils.parametrizations.weight_norm(torch.nn.Conv1d(
             in_channels, out_channels, kernel_size,
             padding=padding, dilation=dilation
         ))
@@ -68,7 +68,7 @@ class CausalConvolutionBlock(torch.nn.Module):
         relu1 = torch.nn.LeakyReLU()
 
         # Second causal convolution
-        conv2 = torch.nn.utils.weight_norm(torch.nn.Conv1d(
+        conv2 = torch.nn.utils.parametrizations.weight_norm(torch.nn.Conv1d(
             out_channels, out_channels, kernel_size,
             padding=padding, dilation=dilation
         ))
