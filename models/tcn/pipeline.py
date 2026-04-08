@@ -14,10 +14,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 
-SHARED_DIR = os.path.join(os.path.dirname(__file__), '../../shared')
-TCN_DIR = os.path.dirname(__file__)
-sys.path.insert(0, SHARED_DIR)
+TCN_DIR = os.path.dirname(os.path.abspath(__file__))
+SHARED_DIR = os.path.join(TCN_DIR, '..', '..', 'shared')
 sys.path.insert(0, TCN_DIR)
+sys.path.insert(0, SHARED_DIR)
 
 from dataset import ASDAggressionDataset
 from splitters import loso_splits, kfold_participant_splits, session_splits
@@ -54,9 +54,9 @@ class NormSubset(Subset):
     Parameters
     ----------
     subset : torch.utils.data.Subset
-    mean : np.ndarray, shape (C,)
+    mean : np.ndarray of shape (C,)
         Per-channel mean computed from the inner training split.
-    std : np.ndarray, shape (C,)
+    std : np.ndarray of shape (C,)
         Per-channel std computed from the inner training split.
     """
 
@@ -80,8 +80,8 @@ def compute_norm_stats(subset):
 
     Returns
     -------
-    mean : np.ndarray, shape (C,)
-    std : np.ndarray, shape (C,)
+    mean : np.ndarray of shape (C,)
+    std : np.ndarray of shape (C,)
     """
     idx = np.asarray(subset.indices).astype(int)
     X = subset.dataset.instances[idx]   # (N, C, T)
@@ -101,7 +101,7 @@ def compute_pos_weight(subset):
 
     Returns
     -------
-    pos_weight : torch.Tensor, shape (1,)
+    pos_weight : torch.Tensor of shape (1,)
     """
     idx = np.asarray(subset.indices).astype(int)
     labels = subset.dataset.labels[idx]
@@ -112,16 +112,16 @@ def compute_pos_weight(subset):
     return weight
 
 
-# ============= Val split =============
+# ============= Val Split =============
 
 def make_val_split(train_subset, val_prop=0.2):
     """
     Chronological val split from a train Subset, respecting session boundaries.
 
-    Applies the same superposition-gap logic as session_splits: the overlap
-    buffer at each session's split boundary is removed from the training tail
-    to prevent temporal leakage. Sessions with fewer than 4 instances are kept
-    entirely in training.
+    For each (subject, session) group, holds out the last val_prop fraction as
+    val and removes the superposition overlap gap from the training tail to
+    prevent temporal leakage. Sessions with fewer than 4 instances go entirely
+    to inner training.
 
     Parameters
     ----------
@@ -163,6 +163,10 @@ def make_val_split(train_subset, val_prop=0.2):
             n_overlap = int(sess_sup[first_val][0])
             last_train = first_val - n_overlap
 
+            if last_train <= 0:
+                inner_train_idx.extend(sess_idx.tolist())
+                continue
+
             inner_train_idx.extend(sess_idx[:last_train].tolist())
             inner_val_idx.extend(sess_idx[first_val:].tolist())
 
@@ -197,7 +201,7 @@ def build_model(params, device):
     return model.to(device)
 
 
-# ============= Fold runner =============
+# ============= Fold Runner =============
 
 def run_fold(train_subset, test_subset, params, device, save_path,
              val_prop=0.2, o_load=False):
@@ -206,8 +210,8 @@ def run_fold(train_subset, test_subset, params, device, save_path,
 
     An inner chronological val split is created from train_subset via
     make_val_split. Normalization stats and pos_weight are derived from the
-    inner training split only. The test_subset is never touched during training.
-    Threshold for test evaluation is selected by maximising F1 on val predictions.
+    inner training split only. Threshold for test evaluation is selected by
+    maximising F1 on val predictions.
 
     Parameters
     ----------
@@ -225,8 +229,8 @@ def run_fold(train_subset, test_subset, params, device, save_path,
     """
     inner_train, inner_val = make_val_split(train_subset, val_prop=val_prop)
     print(
-        f"  inner split -- train={len(inner_train)}"
-        f"  val={len(inner_val)}  test={len(test_subset)} instances"
+        f"  inner split -- train: {len(inner_train)}"
+        f"  val: {len(inner_val)}  test: {len(test_subset)} instances"
     )
 
     mean, std = compute_norm_stats(inner_train)
@@ -282,7 +286,7 @@ def run_fold(train_subset, test_subset, params, device, save_path,
         )
         torch.save(model.state_dict(), save_path + '_final.pth')
 
-    # find optimal threshold on val set, apply to test
+    # threshold selected on val, applied to test
     model.eval()
     val_probs, val_labels = [], []
     with torch.no_grad():
@@ -308,20 +312,20 @@ def parse_arguments():
     parser.add_argument('--hyper', type=str, required=True)
     parser.add_argument('--bin_size', type=int, default=15)
     parser.add_argument('--num_observation_frames', type=int, default=12)
-    parser.add_argument('--num_prediction_frames', type=int, default=4)
+    parser.add_argument('--num_prediction_frames', type=int, default=12)
     parser.add_argument('--split', type=str, default='loso',
                         choices=['loso', 'kfold', 'session'])
     parser.add_argument('--n_splits', type=int, default=5)
     parser.add_argument('--val_prop', type=float, default=0.2)
     parser.add_argument('--cuda', action='store_true')
     parser.add_argument('--gpu', type=int, default=0)
-    parser.add_argument('--multiclass', action='store_true', default=False)
     parser.add_argument('--run_from_scratch', action='store_true', default=False)
     parser.add_argument('--load', action='store_true', default=False)
     return parser.parse_args()
 
 
 def _print_fold_metrics(metrics):
+    """Prints a single-line per-fold summary to stdout."""
     print(
         f"  auprc={metrics['auprc']:.4f}  "
         f"auc={metrics['auc_roc']:.4f}  "
@@ -333,6 +337,7 @@ def _print_fold_metrics(metrics):
 
 
 def _save_metrics(all_metrics, path):
+    """Saves per-fold metrics dict and aggregate summary to a JSON file."""
     serializable = {
         fold: {
             k: v.tolist() if hasattr(v, 'tolist') else v
@@ -340,8 +345,9 @@ def _save_metrics(all_metrics, path):
         }
         for fold, m in all_metrics.items()
     }
+    summary = summarize_metrics(all_metrics)
     with open(path, 'w') as f:
-        json.dump(serializable, f, indent=2)
+        json.dump({'folds': serializable, 'summary': summary}, f, indent=2)
 
 
 if __name__ == '__main__':
@@ -363,13 +369,11 @@ if __name__ == '__main__':
     print("loading dataset...")
     dataset = ASDAggressionDataset(
         data_path=args.data_path,
-        bin_size=args.bin_size,
         num_observation_frames=args.num_observation_frames,
         num_prediction_frames=args.num_prediction_frames,
-        o_multiclass=args.multiclass,
+        bin_size=args.bin_size,
         o_run_from_scratch=args.run_from_scratch,
     )
-    print(f"dataset loaded: {len(dataset)} instances")
 
     os.makedirs(args.save_path, exist_ok=True)
     all_metrics = {}
@@ -408,16 +412,16 @@ if __name__ == '__main__':
 
     # ── Session ───────────────────────────────────────────────────────────────
     elif args.split == 'session':
-        print("\n=== session split ===")
-        train_subset, test_subset = session_splits(dataset)
-        prefix = os.path.join(args.save_path, 'session_model')
+        for _, train_subset, test_subset in session_splits(dataset):
+            print("\n=== session split ===")
+            prefix = os.path.join(args.save_path, 'session_model')
 
-        metrics = run_fold(
-            train_subset, test_subset, params, device, prefix,
-            val_prop=args.val_prop, o_load=args.load,
-        )
-        all_metrics['session'] = metrics
-        _print_fold_metrics(metrics)
+            metrics = run_fold(
+                train_subset, test_subset, params, device, prefix,
+                val_prop=args.val_prop, o_load=args.load,
+            )
+            all_metrics['session'] = metrics
+            _print_fold_metrics(metrics)
 
     # ── Summary ───────────────────────────────────────────────────────────────
     summary = summarize_metrics(all_metrics)

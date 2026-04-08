@@ -5,13 +5,9 @@ Training loop utilities for the TCN aggression prediction model.
 import json
 from copy import deepcopy
 
+import numpy as np
 import torch
-
-
-def _get_evaluator():
-    """Lazily imports evaluate_val_auprc to avoid sys.path dependency at module load time."""
-    from evaluator import evaluate_val_auprc
-    return evaluate_val_auprc
+from sklearn.metrics import average_precision_score
 
 
 def train_one_epoch(model, loader, optimizer, criterion, device, max_grad_norm=1.0):
@@ -26,13 +22,14 @@ def train_one_epoch(model, loader, optimizer, criterion, device, max_grad_norm=1
     criterion : torch.nn.BCEWithLogitsLoss
     device : torch.device
     max_grad_norm : float
-        Maximum norm for gradient clipping. Prevents large gradient updates
-        from dilated convolution layers in early training.
+        Gradient clipping norm. Prevents large updates from dilated conv layers
+        in early training.
 
     Returns
     -------
     avg_loss : float
     accuracy : float
+        Accuracy at 0.5 threshold, for training progress monitoring only.
     """
     model.train()
     total_loss = 0.0
@@ -41,28 +38,29 @@ def train_one_epoch(model, loader, optimizer, criterion, device, max_grad_norm=1
 
     for signals, labels in loader:
         signals = signals.to(device)
-        labels = labels.to(device)
+        labels_dev = labels.to(device)
 
         optimizer.zero_grad()
-        logits = model(signals).squeeze(1)          # (batch,)
-        loss = criterion(logits, labels.float())
+        logits = model(signals).squeeze(1)
+        loss = criterion(logits, labels_dev.float())
         loss.backward()
-
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-
         optimizer.step()
 
         preds = (logits.sigmoid() > 0.5).long()
         total_loss += loss.item() * len(labels)
-        n_correct += (preds == labels).sum().item()
+        n_correct += (preds == labels_dev).sum().item()
         n_total += len(labels)
 
     return total_loss / n_total, n_correct / n_total
 
 
-def validate(model, loader, criterion, device):
+def _validate(model, loader, criterion, device):
     """
-    Evaluates loss and accuracy on a DataLoader without gradient computation.
+    Single forward pass over a validation DataLoader.
+
+    Returns val loss, accuracy at 0.5, and AUPRC in one pass to avoid
+    iterating the loader multiple times per epoch.
 
     Parameters
     ----------
@@ -75,26 +73,35 @@ def validate(model, loader, criterion, device):
     -------
     avg_loss : float
     accuracy : float
+    auprc : float
     """
     model.eval()
     total_loss = 0.0
     n_correct = 0
     n_total = 0
+    all_probs, all_labels = [], []
 
     with torch.no_grad():
         for signals, labels in loader:
             signals = signals.to(device)
-            labels = labels.to(device)
+            labels_dev = labels.to(device)
+            logits = model(signals).squeeze(1)
+            loss = criterion(logits, labels_dev.float())
 
-            logits = model(signals).squeeze(1)      # (batch,)
-            loss = criterion(logits, labels.float())
-
-            preds = (logits.sigmoid() > 0.5).long()
+            probs = logits.sigmoid()
+            preds = (probs > 0.5).long()
             total_loss += loss.item() * len(labels)
-            n_correct += (preds == labels).sum().item()
+            n_correct += (preds == labels_dev).sum().item()
             n_total += len(labels)
+            all_probs.extend(probs.cpu().numpy())
+            all_labels.extend(labels.numpy())
 
-    return total_loss / n_total, n_correct / n_total
+    try:
+        auprc = float(average_precision_score(all_labels, all_probs))
+    except ValueError:
+        auprc = float('nan')
+
+    return total_loss / n_total, n_correct / n_total, auprc
 
 
 def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
@@ -106,8 +113,8 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
     on imbalanced data val loss can decrease while AUPRC degrades if the model
     drifts toward predicting all-negative.
 
-    Saves the best-epoch checkpoint to `save_path + '_best.pth'` and training
-    history to `save_path + '_history.json'`.
+    Saves the best-epoch checkpoint to save_path + '_best.pth' and training
+    history to save_path + '_history.json'.
 
     Parameters
     ----------
@@ -116,22 +123,20 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
     val_loader : torch.utils.data.DataLoader
     criterion : torch.nn.BCEWithLogitsLoss
     optimizer : torch.optim.Optimizer
-    scheduler : torch.optim.lr_scheduler or None
-        Expected to be ReduceLROnPlateau; stepped on val_auprc each epoch.
+    scheduler : torch.optim.lr_scheduler.ReduceLROnPlateau
+        Stepped on negated val AUPRC each epoch.
     device : torch.device
     epochs : int
     patience : int
     save_path : str
-        File path prefix for checkpoint and history outputs.
     max_grad_norm : float
-        Gradient clipping norm passed to train_one_epoch.
 
     Returns
     -------
     model : torch.nn.Module
         Loaded with best observed weights.
     history : dict
-        Keys: 'train_loss', 'train_acc', 'val_loss', 'val_acc', 'val_auprc'.
+        Keys: train_loss, train_acc, val_loss, val_acc, val_auprc.
     """
     best_val_auprc = -1.0
     best_state = None
@@ -141,17 +146,13 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
         'val_loss': [], 'val_acc': [], 'val_auprc': [],
     }
 
-    evaluate_val_auprc = _get_evaluator()
-
     for epoch in range(epochs):
         train_loss, train_acc = train_one_epoch(
             model, train_loader, optimizer, criterion, device, max_grad_norm
         )
-        val_loss, val_acc = validate(model, val_loader, criterion, device)
-        val_auprc = evaluate_val_auprc(model, val_loader, device)
+        val_loss, val_acc, val_auprc = _validate(model, val_loader, criterion, device)
 
         if scheduler is not None:
-            # step on negative auprc so ReduceLROnPlateau minimises
             scheduler.step(-val_auprc)
 
         history['train_loss'].append(train_loss)
