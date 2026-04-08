@@ -25,6 +25,38 @@ def set_seed(seed):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
+def make_run_config(args):
+    """
+    Build a dict of all arguments that affect training results.
+    Used to validate whether cached intermediate files are still valid.
+    """
+    with open(args.hyper, 'r') as f:
+        hyper_params = json.load(f)
+    return {
+        'bin_size': args.bin_size,
+        'num_observation_frames': args.num_observation_frames,
+        'num_prediction_frames': args.num_prediction_frames,
+        'cluster_num': args.cluster_num,
+        'multiclass': args.multiclass,
+        'split': args.split,
+        'n_splits': args.n_splits,
+        'seed': args.seed,
+        'hyper': hyper_params,
+    }
+
+
+def config_matches(prefix, run_config):
+    """
+    Returns True if a run_config saved at prefix matches the given run_config.
+    """
+    config_path = prefix + '_run_config.json'
+    if not os.path.exists(config_path):
+        return False
+    with open(config_path, 'r') as f:
+        saved = json.load(f)
+    return saved == run_config
+
+
 def load_dataset(data_path, bin_size, num_observation_frames, num_prediction_frames,
                  o_multiclass=False, o_run_from_scratch=False):
     """
@@ -107,7 +139,7 @@ def normalize(train, test):
 
 
 def fit_parameters(file, train, train_labels, test, test_labels, cuda, gpu,
-                   save_path, cluster_num, save_memory=False, override_epochs=None, seed=42):
+                   save_path, cluster_num, save_memory=False, override_epochs=None, seed=42, use_cache=False):
     """
     Instantiates a CausalCNNEncoderClassifier from a JSON hyperparameter file,
     fits it on the training data, and returns the trained classifier.
@@ -144,7 +176,7 @@ def fit_parameters(file, train, train_labels, test, test_labels, cuda, gpu,
     return classifier.fit(
         train, train_labels, test, test_labels,
         save_path, cluster_num,
-        save_memory=save_memory, verbose=True
+        save_memory=save_memory, verbose=True, use_cache=use_cache
     )
 
 
@@ -217,6 +249,9 @@ if __name__ == '__main__':
 
     os.makedirs(args.save_path, exist_ok=True)
 
+    # Compute once; used by all fold branches to validate intermediate caches.
+    run_config = make_run_config(args)
+
     # ── Smoke test: bypass fold logic, sample directly from full dataset ─────
     if args.smoke_test:
         print(f"\n=== SMOKE TEST ({args.smoke_test_n} samples/class for train, {args.smoke_test_n} for test) ===")
@@ -254,10 +289,16 @@ if __name__ == '__main__':
             prefix = os.path.join(fold_save_path, f'pid_{test_pid}')
 
             if not args.load:
+                use_cache = (not args.run_from_scratch) and config_matches(prefix, run_config)
+                if not use_cache:
+                    # Write-ahead: save config before training so partial results
+                    # can be resumed on the next run with the same args.
+                    with open(prefix + '_run_config.json', 'w') as fp:
+                        json.dump(run_config, fp)
                 classifier = fit_parameters(
                     args.hyper, train, train_labels, test, test_labels,
                     args.cuda, args.gpu, prefix, args.cluster_num,
-                    seed=args.seed
+                    seed=args.seed, use_cache=use_cache
                 )
                 classifier.save(prefix)
                 with open(prefix + '_parameters.json', 'w') as fp:
@@ -285,10 +326,14 @@ if __name__ == '__main__':
             prefix = os.path.join(fold_save_path, f'fold_{fold}')
 
             if not args.load:
+                use_cache = (not args.run_from_scratch) and config_matches(prefix, run_config)
+                if not use_cache:
+                    with open(prefix + '_run_config.json', 'w') as fp:
+                        json.dump(run_config, fp)
                 classifier = fit_parameters(
                     args.hyper, train, train_labels, test, test_labels,
                     args.cuda, args.gpu, prefix, args.cluster_num,
-                    seed=args.seed
+                    seed=args.seed, use_cache=use_cache
                 )
                 classifier.save(prefix)
                 with open(prefix + '_parameters.json', 'w') as fp:
@@ -314,10 +359,14 @@ if __name__ == '__main__':
         prefix = os.path.join(args.save_path, 'session_model')
 
         if not args.load:
+            use_cache = (not args.run_from_scratch) and config_matches(prefix, run_config)
+            if not use_cache:
+                with open(prefix + '_run_config.json', 'w') as fp:
+                    json.dump(run_config, fp)
             classifier = fit_parameters(
                 args.hyper, train, train_labels, test, test_labels,
                 args.cuda, args.gpu, prefix, args.cluster_num,
-                seed=args.seed
+                seed=args.seed, use_cache=use_cache
             )
             classifier.save(prefix)
             with open(prefix + '_parameters.json', 'w') as fp:
