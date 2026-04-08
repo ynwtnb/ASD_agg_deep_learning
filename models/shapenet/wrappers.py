@@ -2,9 +2,9 @@ import math
 import numpy
 import torch
 import random
+import joblib
 import sklearn
 import sklearn.linear_model
-import joblib
 from sklearn.cluster import KMeans
 from collections import Counter
 from sklearn.neighbors import KNeighborsClassifier
@@ -162,9 +162,9 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         @param verbose Enables, if True, to monitor which epoch is running in
                the encoder training.
         """
-        train = torch.from_numpy(X)
+        train = torch.from_numpy(X).float()
         if self.cuda:
-            train = train.cuda(self.gpu)
+            train = train.cuda(self.gpu).float()
 
         train_torch_dataset = utils.Dataset(X)
         train_generator = torch.utils.data.DataLoader(
@@ -179,7 +179,9 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
             for batch in train_generator:
                 batch_start = timeit.default_timer()
                 if self.cuda:
-                    batch = batch.cuda(self.gpu)
+                    batch = batch.cuda(self.gpu).float()
+                else:
+                    batch = batch.float()
                 self.optimizer.zero_grad()
                 loss = self.loss(
                    batch, self.encoder, self.params, save_memory=save_memory
@@ -213,33 +215,30 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         """
         final_shapelet_num = 3
         # Fitting encoder
-        encoder_start = timeit.default_timer()
+        t0 = timeit.default_timer()
         self.encoder = self.fit_encoder(
                                         X, y=y, save_memory=save_memory, verbose=verbose
                                         )
-        encoder_end = timeit.default_timer()
-        print("encode time: ", (encoder_end- encoder_start)/60)
+        print(f"[timing] encoder: {(timeit.default_timer()-t0)/60:.3f} min")
 
         # shapelet discovery
-        discovery_start = timeit.default_timer()
+        t0 = timeit.default_timer()
         shapelet, shapelet_dim, utility_sort_index = self.shapelet_discovery(X, y, cluster_num, batch_size=50)
-        discovery_end = timeit.default_timer()
-        print("discovery time: ", (discovery_end- discovery_start)/60)
+        print(f"[timing] discovery: {(timeit.default_timer()-t0)/60:.3f} min")
+        
+        self.save_shapelet(prefix_file, shapelet, shapelet_dim)
 
         # shapelet transformation
-        transformation_start = timeit.default_timer()
+        t0 = timeit.default_timer()
         features = self.shapelet_transformation(X, shapelet, shapelet_dim, utility_sort_index, final_shapelet_num)
-        transformation_end = timeit.default_timer()
-        print("transformation time: ", (transformation_end - transformation_start)/60)
+        print(f"[timing] transformation: {(timeit.default_timer()-t0)/60:.3f} min")
 
         # SVM classifier training
-        classification_start = timeit.default_timer()
+        t0 = timeit.default_timer()
         self.classifier = self.fit_svm_linear(features, y)
-        classification_end = timeit.default_timer()
-        print("classification time: ", (classification_end - classification_start)/60)
+        print(f"[timing] SVM: {(timeit.default_timer()-t0)/60:.3f} min")
         print("svm linear Accuracy: "+str(self.score(test, test_labels, shapelet, shapelet_dim, utility_sort_index, final_shapelet_num)))
 
-        self.save_shapelet(prefix_file, shapelet, shapelet_dim)
 
         return self
 
@@ -267,7 +266,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                     batch = batch.cuda(self.gpu)
                 features[
                     count * batch_size: (count + 1) * batch_size
-                ] = self.encoder(batch)
+                ] = self.encoder(batch).cpu().detach().numpy()
                 count += 1
 
         self.encoder = self.encoder.train()
@@ -289,13 +288,19 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         X_slide_num = []
         gama = 0.5
 
+        X_slides = []  # cache for traceback
+        t0 = timeit.default_timer()
         for m in range(slide_num):
             # slide the raw time series and the corresponding class and variate label
+            ts = timeit.default_timer()
             X_slide, candidates_dim, candidates_class_label = slide.slide_MTS_dim_step(X, train_labels, alpha)
+            X_slides.append(X_slide)
+            print(f"  slide {m}: {(timeit.default_timer()-ts)/60:.3f} min | X_slide: {X_slide.shape}")
             X_slide_num.append(numpy.shape(X_slide)[0])
             beta =  beta -2
             alpha = beta/10
 
+            te = timeit.default_timer()
             test = utils.Dataset(X_slide)
             test_generator = torch.utils.data.DataLoader(test, batch_size=batch_size)
 
@@ -305,18 +310,22 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
             with torch.no_grad():
                 for batch in test_generator:
                     if self.cuda:
-                        batch = batch.cuda(self.gpu)
+                        batch = batch.cuda(self.gpu).float()
+                    else:
+                        batch = batch.float()
                     # 2D to 3D
                     batch.unsqueeze_(1)
                     batch = self.encoder(batch)
 
+                    batch_np = batch.cpu().detach().numpy()
                     if count == 0:
-                        representation = batch
+                        representation = batch_np
                     else:
-                        representation = numpy.concatenate((representation, batch), axis=0)
+                        representation = numpy.concatenate((representation, batch_np), axis=0)
                     count += 1
             self.encoder = self.encoder.train()
             count = 0
+            print(f"  encode {m}: {(timeit.default_timer()-te)/60:.3f} min")
             # concatenate the new representation from different slides
             if m == 0 :
                 representation_all = representation
@@ -327,67 +336,75 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                 representation_dim = representation_dim + candidates_dim
                 representation_class_label = numpy.concatenate((representation_class_label, candidates_class_label), axis=0)
 
+        print(f"  [discovery] slide+encode: {(timeit.default_timer()-t0)/60:.3f} min | representation_all: {representation_all.shape}")
+
         # cluster all the new representations
+        t0 = timeit.default_timer()
         num_cluster = cluster_num
         kmeans = KMeans(n_clusters = num_cluster)
         kmeans.fit(representation_all)
+        print(f"  [discovery] KMeans: {(timeit.default_timer()-t0)/60:.3f} min")
 
         # init candidate as list
         candidate = []
-        candidate_dim = numpy.zeros(num_cluster)
+        candidate_dim = []
         # two parts of utility function
         candidate_cluster_size = []
         candidate_first_representation = []
         utility = []
 
+        # Precompute cumulative slide offsets for O(1) traceback
+        slide_offsets = numpy.cumsum([0] + X_slide_num[:-1])
+
+        t0 = timeit.default_timer()
         # select the nearest to the centroid
         for i in range(num_cluster):
-            candidate_cluster_size.append(representation_all[kmeans.labels_==i][:,0].size)
-            dim_in_cluster_i = list()
-            class_label_cluster_i = list()
-            dist = math.inf
-            for j in range(representation_all[kmeans.labels_==i][:,0].size):
-                match_full = numpy.where(representation_all == (representation_all[kmeans.labels_==i][j]))
-                match = numpy.unique(match_full)
-                dist_tmp = numpy.linalg.norm(representation_all[kmeans.labels_==i][j] - kmeans.cluster_centers_[i])
-                for k in range(match.shape[0]):
-                    dim_in_cluster_i.append(representation_dim[match[k]])
-                    class_label_cluster_i.append(representation_class_label[match[k]])
-                if dist_tmp < dist:
-                    dist = dist_tmp
+            # Use global indices directly — avoids O(N²) numpy.where per sample
+            cluster_global_indices = numpy.where(kmeans.labels_ == i)[0]
+            cluster_size_i = len(cluster_global_indices)
+            dim_in_cluster_i = [representation_dim[j] for j in cluster_global_indices]
+            class_label_cluster_i = [representation_class_label[j] for j in cluster_global_indices]
 
-                    # record the first representation
-                    tmp_candidate_first_representation = representation_all[kmeans.labels_==i][j]
-                    # trace back the original candidates
-                    nearest = numpy.where(representation_all == (representation_all[kmeans.labels_==i][j]))
-                    sum_X_slide_num = 0
-                    for k in range(slide_num):
-                        sum_X_slide_num += X_slide_num[k]
-                        if (nearest[0][0] < sum_X_slide_num):
-                            index_slide = nearest[0][0] - sum_X_slide_num + X_slide_num[k]
-                            X_slide_disc = slide.slide_MTS_dim(X, (0.6-k*0.2))
-                            candidate_tmp = X_slide_disc[index_slide]
-                            candidate_dim[i] = index_slide % numpy.shape(X)[1]
-                            break
+            # Vectorized distance to centroid — finds nearest in one shot
+            dists = numpy.linalg.norm(
+                representation_all[cluster_global_indices] - kmeans.cluster_centers_[i], axis=1
+            )
+            nearest_local = int(numpy.argmin(dists))
+            nearest_global_idx = int(cluster_global_indices[nearest_local])
+            tmp_candidate_first_representation = representation_all[nearest_global_idx]
+
+            # Traceback: find which slide this global index belongs to
+            for k in range(slide_num):
+                end = int(slide_offsets[k]) + X_slide_num[k]
+                if nearest_global_idx < end:
+                    index_slide = nearest_global_idx - int(slide_offsets[k])
+                    X_slide_disc = X_slides[k]
+                    candidate_tmp = X_slide_disc[index_slide]
+                    candidate_dim.append(index_slide % numpy.shape(X)[1])
+                    break
+
             class_label_top = (Counter(class_label_cluster_i).most_common(1)[0][1] / len(class_label_cluster_i))
             dim_label_top = (Counter(dim_in_cluster_i).most_common(1)[0][1] / len(dim_in_cluster_i))
-            if (class_label_top < (1/numpy.unique(train_labels).shape[0])) or (dim_label_top < (1/numpy.shape(X)[1])) :
-                del candidate_dim[-1]
+            if (class_label_top < (1/numpy.unique(train_labels).shape[0])) or (dim_label_top < (1/numpy.shape(X)[1])):
+                if candidate_dim:
+                    candidate_dim.pop()
                 continue
-            # append the first representation
             candidate_first_representation.append(tmp_candidate_first_representation)
-            # list append method
+            candidate_cluster_size.append(cluster_size_i)
             candidate.append(candidate_tmp)
+        print(f"  [discovery] centroid selection: {(timeit.default_timer()-t0)/60:.3f} min")
 
-        # utility
-        for i in range(num_cluster):
-            ed_dist_sum = 0
-            for j in range(len(candidate_first_representation)):
-                ed_dist_sum += numpy.linalg.norm(candidate_first_representation[i] - candidate_first_representation[j])
-            utility.append(gama * candidate_cluster_size[i] + (1-gama) * ed_dist_sum)
+        t0 = timeit.default_timer()
+        # utility — vectorized pairwise distances
+        if candidate_first_representation:
+            rep_matrix = numpy.stack(candidate_first_representation, axis=0)  # (M, D)
+            for i in range(len(candidate_first_representation)):
+                ed_dist_sum = numpy.sum(numpy.linalg.norm(rep_matrix - rep_matrix[i], axis=1))
+                utility.append(gama * candidate_cluster_size[i] + (1-gama) * ed_dist_sum)
 
         # sort utility namely candidate
         utility_sort_index = numpy.argsort(-numpy.array(utility))
+        print(f"  [discovery] utility sort: {(timeit.default_timer()-t0)/60:.3f} min")
 
         return candidate, candidate_dim, utility_sort_index
 
@@ -504,7 +521,7 @@ class CausalCNNEncoderClassifier(TimeSeriesEncoderClassifier):
             in_channels, channels, depth, reduced_size, out_channels,
             kernel_size
         )
-        encoder.double()
+        # encoder.double()
         if cuda:
             encoder.cuda(gpu)
         return encoder
