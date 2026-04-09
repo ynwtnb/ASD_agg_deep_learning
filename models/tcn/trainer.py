@@ -44,7 +44,11 @@ def train_one_epoch(model, loader, optimizer, criterion, device, max_grad_norm=1
         logits = model(signals).squeeze(1)
         loss = criterion(logits, labels_dev.float())
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+        if torch.isnan(grad_norm):
+            print("  WARNING: NaN gradient norm detected, skipping batch")
+            optimizer.zero_grad()
+            continue
         optimizer.step()
 
         preds = (logits.sigmoid() > 0.5).long()
