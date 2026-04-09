@@ -7,7 +7,11 @@ import json
 import os
 import sys
 import timeit
+import warnings
 from math import trunc
+
+warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore', category=UserWarning)
 
 import numpy as np
 import torch

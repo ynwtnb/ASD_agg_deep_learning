@@ -4,7 +4,7 @@
     "kernel_size": 7,
     "dropout": 0.2,
     "readout": "mean",
-    "lr": 0.001,
+    "lr": 0.00001,
     "weight_decay": 1e-4,
     "batch_size": 32,
     "epochs": 100,
