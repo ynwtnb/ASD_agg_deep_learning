@@ -294,7 +294,19 @@ def run_fold(train_subset, test_subset, params, device, save_path,
             probs = model(signals.to(device)).squeeze(1).sigmoid()
             val_probs.extend(probs.cpu().numpy())
             val_labels.extend(labels.numpy())
-    threshold = find_optimal_threshold(np.array(val_labels), np.array(val_probs))
+    val_probs_arr = np.array(val_probs)
+    val_labels_arr = np.array(val_labels)
+    print(f"  val set: {len(val_labels_arr)} instances, {int(val_labels_arr.sum())} positive")
+    print(f"  val probs: min={val_probs_arr.min():.4f} max={val_probs_arr.max():.4f} nan={np.isnan(val_probs_arr).sum()}")
+
+    if np.isnan(val_probs_arr).any():
+        print("  WARNING: NaN in val probs — gradients likely exploded, check loss curve in history")
+        threshold = 0.5
+    elif val_labels_arr.sum() == 0:
+        print("  WARNING: no positive instances in val set — threshold defaulting to 0.5")
+        threshold = 0.5
+    else:
+        threshold = find_optimal_threshold(val_labels_arr, val_probs_arr)
     print(f"  optimal threshold (val F1): {threshold:.4f}")
 
     return evaluate(model, test_loader, device, threshold=threshold)
