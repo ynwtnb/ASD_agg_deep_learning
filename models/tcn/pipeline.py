@@ -16,7 +16,7 @@ warnings.filterwarnings('ignore', category=UserWarning)
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
 
 TCN_DIR = os.path.dirname(os.path.abspath(__file__))
 SHARED_DIR = os.path.join(TCN_DIR, '..', '..', 'shared')
@@ -95,13 +95,17 @@ def compute_norm_stats(subset):
     return mean, std
 
 
-def compute_pos_weight(subset):
+# ============= Class Imbalance =============
+
+def compute_pos_weight(subset, max_pos_weight=5.0):
     """
-    Computes BCE pos_weight = n_negative / n_positive from a training Subset.
+    Computes clamped BCE pos_weight from a training Subset.
 
     Parameters
     ----------
     subset : torch.utils.data.Subset
+    max_pos_weight : float
+        Upper bound for pos_weight to prevent gradient spikes.
 
     Returns
     -------
@@ -111,9 +115,42 @@ def compute_pos_weight(subset):
     labels = subset.dataset.labels[idx]
     n_pos = float(labels.sum())
     n_neg = float(len(labels) - n_pos)
-    weight = torch.tensor([n_neg / max(n_pos, 1.0)], dtype=torch.float32)
-    print(f"  class imbalance -- pos_weight: {weight.item():.2f}")
+    raw_weight = n_neg / max(n_pos, 1.0)
+    clamped = min(raw_weight, max_pos_weight)
+    weight = torch.tensor([clamped], dtype=torch.float32)
+    print(f"  class imbalance -- raw pos_weight: {raw_weight:.2f}, clamped: {clamped:.2f}")
     return weight
+
+
+def make_train_sampler(subset):
+    """
+    Creates a WeightedRandomSampler that balances classes in each mini-batch.
+
+    Each positive instance gets weight 1/n_pos and each negative instance gets
+    weight 1/n_neg, so in expectation each batch is roughly 50/50. Sampling is
+    with replacement to allow the minority class to be drawn frequently enough.
+
+    Parameters
+    ----------
+    subset : torch.utils.data.Subset
+
+    Returns
+    -------
+    sampler : torch.utils.data.WeightedRandomSampler
+    """
+    idx = np.asarray(subset.indices).astype(int)
+    labels = subset.dataset.labels[idx]
+    n_pos = float(labels.sum())
+    n_neg = float(len(labels) - n_pos)
+    weight_pos = 1.0 / max(n_pos, 1.0)
+    weight_neg = 1.0 / max(n_neg, 1.0)
+    sample_weights = np.where(labels > 0, weight_pos, weight_neg)
+    sample_weights_t = torch.from_numpy(sample_weights).double()
+    return WeightedRandomSampler(
+        sample_weights_t,
+        num_samples=len(sample_weights_t),
+        replacement=True,
+    )
 
 
 # ============= Val Split =============
@@ -238,6 +275,7 @@ def run_fold(train_subset, test_subset, params, device, save_path,
     )
 
     mean, std = compute_norm_stats(inner_train)
+    train_sampler = make_train_sampler(inner_train)
     train_norm = NormSubset(inner_train, mean, std)
     val_norm = NormSubset(inner_val, mean, std)
     test_norm = NormSubset(test_subset, mean, std)
@@ -245,7 +283,7 @@ def run_fold(train_subset, test_subset, params, device, save_path,
     pin = device.type == 'cuda'
     train_loader = DataLoader(
         train_norm, batch_size=params['batch_size'],
-        shuffle=True, num_workers=0, pin_memory=pin,
+        sampler=train_sampler, num_workers=0, pin_memory=pin,
     )
     val_loader = DataLoader(
         val_norm, batch_size=params['batch_size'],
@@ -263,7 +301,8 @@ def run_fold(train_subset, test_subset, params, device, save_path,
             torch.load(save_path + '_best.pth', map_location=device)
         )
     else:
-        pos_weight = compute_pos_weight(inner_train).to(device)
+        max_pw = params.get('max_pos_weight', 5.0)
+        pos_weight = compute_pos_weight(inner_train, max_pos_weight=max_pw).to(device)
         criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
         optimizer = torch.optim.Adam(
             model.parameters(),
@@ -287,6 +326,7 @@ def run_fold(train_subset, test_subset, params, device, save_path,
             patience=params['patience'],
             save_path=save_path,
             max_grad_norm=params.get('max_grad_norm', 1.0),
+            warmup_epochs=params.get('warmup_epochs', 5),
         )
         torch.save(model.state_dict(), save_path + '_final.pth')
 
@@ -304,10 +344,10 @@ def run_fold(train_subset, test_subset, params, device, save_path,
     print(f"  val probs: min={val_probs_arr.min():.4f} max={val_probs_arr.max():.4f} nan={np.isnan(val_probs_arr).sum()}")
 
     if np.isnan(val_probs_arr).any():
-        print("  WARNING: NaN in val probs — gradients likely exploded, check loss curve in history")
+        print("  WARNING: NaN in val probs -- gradients likely exploded, check loss curve in history")
         threshold = 0.5
     elif val_labels_arr.sum() == 0:
-        print("  WARNING: no positive instances in val set — threshold defaulting to 0.5")
+        print("  WARNING: no positive instances in val set -- threshold defaulting to 0.5")
         threshold = 0.5
     else:
         threshold = find_optimal_threshold(val_labels_arr, val_probs_arr)
@@ -394,7 +434,7 @@ if __name__ == '__main__':
     os.makedirs(args.save_path, exist_ok=True)
     all_metrics = {}
 
-    # ── LOSO ──────────────────────────────────────────────────────────────────
+    # -- LOSO ----------------------------------------------------------------
     if args.split == 'loso':
         for test_pid, train_subset, test_subset in loso_splits(dataset):
             print(f"\n=== LOSO fold: test participant {test_pid} ===")
@@ -409,7 +449,7 @@ if __name__ == '__main__':
             all_metrics[str(test_pid)] = metrics
             _print_fold_metrics(metrics)
 
-    # ── K-Fold ────────────────────────────────────────────────────────────────
+    # -- K-Fold --------------------------------------------------------------
     elif args.split == 'kfold':
         for fold, train_subset, test_subset in kfold_participant_splits(
             dataset, n_splits=args.n_splits
@@ -426,7 +466,7 @@ if __name__ == '__main__':
             all_metrics[f'fold_{fold}'] = metrics
             _print_fold_metrics(metrics)
 
-    # ── Session ───────────────────────────────────────────────────────────────
+    # -- Session -------------------------------------------------------------
     elif args.split == 'session':
         print("\n=== session split ===")
         train_subset, test_subset = session_splits(dataset)
@@ -439,7 +479,7 @@ if __name__ == '__main__':
         all_metrics['session'] = metrics
         _print_fold_metrics(metrics)
 
-    # ── Summary ───────────────────────────────────────────────────────────────
+    # -- Summary -------------------------------------------------------------
     summary = summarize_metrics(all_metrics)
     print("\n=== aggregate summary ===")
     for k, v in summary.items():

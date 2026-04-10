@@ -109,16 +109,18 @@ def _validate(model, loader, criterion, device):
 
 
 def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
-          device, epochs, patience, save_path, max_grad_norm=1.0):
+          device, epochs, patience, save_path, max_grad_norm=1.0,
+          warmup_epochs=5):
     """
-    Full training loop with early stopping on validation AUPRC.
+    Full training loop with linear LR warmup and early stopping on val AUPRC.
+
+    For the first warmup_epochs epochs the learning rate ramps linearly from
+    base_lr / 10 to base_lr. After warmup, ReduceLROnPlateau steps on negated
+    val AUPRC each epoch.
 
     AUPRC is used as the early stopping signal rather than val loss because
     on imbalanced data val loss can decrease while AUPRC degrades if the model
     drifts toward predicting all-negative.
-
-    Saves the best-epoch checkpoint to save_path + '_best.pth' and training
-    history to save_path + '_history.json'.
 
     Parameters
     ----------
@@ -128,35 +130,47 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
     criterion : torch.nn.BCEWithLogitsLoss
     optimizer : torch.optim.Optimizer
     scheduler : torch.optim.lr_scheduler.ReduceLROnPlateau
-        Stepped on negated val AUPRC each epoch.
     device : torch.device
     epochs : int
     patience : int
     save_path : str
     max_grad_norm : float
+    warmup_epochs : int
+        Number of epochs for linear LR warmup from base_lr/10 to base_lr.
 
     Returns
     -------
     model : torch.nn.Module
         Loaded with best observed weights.
     history : dict
-        Keys: train_loss, train_acc, val_loss, val_acc, val_auprc.
+        Keys: train_loss, train_acc, val_loss, val_acc, val_auprc, lr.
     """
+    base_lr = optimizer.param_groups[0]['lr']
     best_val_auprc = -1.0
     best_state = None
     epochs_no_improve = 0
     history = {
         'train_loss': [], 'train_acc': [],
         'val_loss': [], 'val_acc': [], 'val_auprc': [],
+        'lr': [],
     }
 
     for epoch in range(epochs):
+        # linear warmup: ramp from base_lr/10 to base_lr
+        if epoch < warmup_epochs:
+            warmup_factor = 0.1 + 0.9 * (epoch / max(warmup_epochs, 1))
+            for pg in optimizer.param_groups:
+                pg['lr'] = base_lr * warmup_factor
+
+        current_lr = optimizer.param_groups[0]['lr']
+
         train_loss, train_acc = train_one_epoch(
             model, train_loader, optimizer, criterion, device, max_grad_norm
         )
         val_loss, val_acc, val_auprc = _validate(model, val_loader, criterion, device)
 
-        if scheduler is not None:
+        # only step the plateau scheduler after warmup completes
+        if scheduler is not None and epoch >= warmup_epochs:
             scheduler.step(-val_auprc)
 
         history['train_loss'].append(train_loss)
@@ -164,9 +178,11 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
         history['val_loss'].append(val_loss)
         history['val_acc'].append(val_acc)
         history['val_auprc'].append(val_auprc)
+        history['lr'].append(current_lr)
 
         print(
             f"  epoch {epoch + 1:03d}/{epochs} | "
+            f"lr {current_lr:.2e} | "
             f"train loss {train_loss:.4f} acc {train_acc:.4f} | "
             f"val loss {val_loss:.4f} acc {val_acc:.4f} auprc {val_auprc:.4f}"
         )
