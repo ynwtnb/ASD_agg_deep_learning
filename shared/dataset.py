@@ -88,7 +88,7 @@ class ASDAggressionDataset(Dataset):
         self.instances = np.concatenate(all_instances, axis=0)
         self.labels = np.concatenate(all_labels, axis=0)
         self.session_ids = np.concatenate(all_session_ids, axis=0)
-        self.superposition_lists = all_superposition
+        self.superposition_lists = np.concatenate(all_superposition, axis=0)
         self.participant_ids = np.concatenate(all_pids, axis=0)
         
     def __len__(self):
@@ -110,7 +110,7 @@ class ASDAggressionDataset(Dataset):
     def get_session_ids(self) -> np.ndarray:
         return self.session_ids
     
-    def get_superposition_lists(self) -> list:
+    def get_superposition_lists(self) -> np.ndarray:
         return self.superposition_lists
 
     def unique_participants(self) -> list:
