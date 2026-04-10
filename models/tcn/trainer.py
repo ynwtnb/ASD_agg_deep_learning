@@ -56,6 +56,10 @@ def train_one_epoch(model, loader, optimizer, criterion, device, max_grad_norm=1
         n_correct += (preds == labels_dev).sum().item()
         n_total += len(labels)
 
+    if n_total == 0:
+        print("  WARNING: all batches skipped due to NaN gradients this epoch")
+        return float('nan'), 0.0
+
     return total_loss / n_total, n_correct / n_total
 
 
@@ -167,6 +171,16 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
         train_loss, train_acc = train_one_epoch(
             model, train_loader, optimizer, criterion, device, max_grad_norm
         )
+
+        # if entire epoch was NaN, skip validation and count as no-improvement
+        if np.isnan(train_loss):
+            print(f"  epoch {epoch + 1:03d}/{epochs} | lr {current_lr:.2e} | SKIPPED (NaN)")
+            epochs_no_improve += 1
+            if epochs_no_improve >= patience:
+                print(f"  early stopping at epoch {epoch + 1}")
+                break
+            continue
+
         val_loss, val_acc, val_auprc = _validate(model, val_loader, criterion, device)
 
         # only step the plateau scheduler after warmup completes

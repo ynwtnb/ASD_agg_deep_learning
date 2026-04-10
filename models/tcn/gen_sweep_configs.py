@@ -20,19 +20,19 @@ BASE = {
 }
 
 GRID = [
-    {"lr": 1e-4, "dropout": 0.1, "max_pos_weight": 5.0},
-    {"lr": 1e-4, "dropout": 0.2, "max_pos_weight": 5.0},
-    {"lr": 5e-4, "dropout": 0.1, "max_pos_weight": 5.0},
-    {"lr": 5e-4, "dropout": 0.2, "max_pos_weight": 5.0},
-    {"lr": 1e-3, "dropout": 0.1, "max_pos_weight": 5.0},
-    {"lr": 1e-3, "dropout": 0.2, "max_pos_weight": 5.0},
-    {"lr": 5e-4, "dropout": 0.1, "max_pos_weight": 3.0},
-    {"lr": 5e-4, "dropout": 0.2, "max_pos_weight": 3.0},
+    {"lr": 1e-4, "dropout": 0.1},
+    {"lr": 1e-4, "dropout": 0.2},
+    {"lr": 5e-4, "dropout": 0.1},
+    {"lr": 5e-4, "dropout": 0.2},
+    {"lr": 1e-3, "dropout": 0.1},
+    {"lr": 1e-3, "dropout": 0.2},
+    {"lr": 5e-4, "dropout": 0.15},
+    {"lr": 1e-4, "dropout": 0.15},
 ]
 
 for i, combo in enumerate(GRID):
     config = {**BASE, **combo}
-    name = f"lr{combo['lr']}_do{combo['dropout']}_pw{combo['max_pos_weight']}"
+    name = f"lr{combo['lr']}_do{combo['dropout']}"
     path = os.path.join(SWEEP_DIR, f"{name}.json")
     with open(path, 'w') as f:
         json.dump(config, f, indent=4)

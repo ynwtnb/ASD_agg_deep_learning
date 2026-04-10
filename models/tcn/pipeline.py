@@ -97,31 +97,6 @@ def compute_norm_stats(subset):
 
 # ============= Class Imbalance =============
 
-def compute_pos_weight(subset, max_pos_weight=5.0):
-    """
-    Computes clamped BCE pos_weight from a training Subset.
-
-    Parameters
-    ----------
-    subset : torch.utils.data.Subset
-    max_pos_weight : float
-        Upper bound for pos_weight to prevent gradient spikes.
-
-    Returns
-    -------
-    pos_weight : torch.Tensor of shape (1,)
-    """
-    idx = np.asarray(subset.indices).astype(int)
-    labels = subset.dataset.labels[idx]
-    n_pos = float(labels.sum())
-    n_neg = float(len(labels) - n_pos)
-    raw_weight = n_neg / max(n_pos, 1.0)
-    clamped = min(raw_weight, max_pos_weight)
-    weight = torch.tensor([clamped], dtype=torch.float32)
-    print(f"  class imbalance -- raw pos_weight: {raw_weight:.2f}, clamped: {clamped:.2f}")
-    return weight
-
-
 def make_train_sampler(subset):
     """
     Creates a WeightedRandomSampler that balances classes in each mini-batch.
@@ -129,6 +104,10 @@ def make_train_sampler(subset):
     Each positive instance gets weight 1/n_pos and each negative instance gets
     weight 1/n_neg, so in expectation each batch is roughly 50/50. Sampling is
     with replacement to allow the minority class to be drawn frequently enough.
+
+    Balanced sampling handles class rebalancing at the data level, so the loss
+    function should use pos_weight=1.0 (neutral) to avoid double-correction
+    that causes gradient amplification.
 
     Parameters
     ----------
@@ -146,6 +125,7 @@ def make_train_sampler(subset):
     weight_neg = 1.0 / max(n_neg, 1.0)
     sample_weights = np.where(labels > 0, weight_pos, weight_neg)
     sample_weights_t = torch.from_numpy(sample_weights).double()
+    print(f"  balanced sampling -- n_pos: {int(n_pos)}, n_neg: {int(n_neg)}")
     return WeightedRandomSampler(
         sample_weights_t,
         num_samples=len(sample_weights_t),
@@ -250,9 +230,11 @@ def run_fold(train_subset, test_subset, params, device, save_path,
     Executes one train/evaluate cycle for a single fold.
 
     An inner chronological val split is created from train_subset via
-    make_val_split. Normalization stats and pos_weight are derived from the
-    inner training split only. Threshold for test evaluation is selected by
-    maximising F1 on val predictions.
+    make_val_split. Normalization stats are derived from the inner training
+    split only. Class rebalancing is handled entirely by WeightedRandomSampler;
+    BCEWithLogitsLoss uses pos_weight=1.0 (neutral) to avoid double-correction.
+    Threshold for test evaluation is selected by maximising F1 on val
+    predictions.
 
     Parameters
     ----------
@@ -301,9 +283,10 @@ def run_fold(train_subset, test_subset, params, device, save_path,
             torch.load(save_path + '_best.pth', map_location=device)
         )
     else:
-        max_pw = params.get('max_pos_weight', 5.0)
-        pos_weight = compute_pos_weight(inner_train, max_pos_weight=max_pw).to(device)
-        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        # balanced sampling handles class rebalancing at the data level,
+        # so pos_weight is neutral to avoid gradient amplification
+        criterion = nn.BCEWithLogitsLoss()
+
         optimizer = torch.optim.Adam(
             model.parameters(),
             lr=params['lr'],

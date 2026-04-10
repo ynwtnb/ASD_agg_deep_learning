@@ -3,7 +3,7 @@
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
 #SBATCH --mem=64G
-#SBATCH --time=07:00:00
+#SBATCH --time=06:00:00
 #SBATCH --array=0-7
 #SBATCH --output=experiments/logs/tcn_sweep_%A_%a.out
 #SBATCH --error=experiments/logs/tcn_sweep_%A_%a.err
@@ -14,14 +14,14 @@ eval "$(conda shell.bash hook)"
 conda activate asd_agg_dl
 
 CONFIGS=(
-    "lr0.0001_do0.1_pw5.0"
-    "lr0.0001_do0.2_pw5.0"
-    "lr0.0005_do0.1_pw5.0"
-    "lr0.0005_do0.2_pw5.0"
-    "lr0.001_do0.1_pw5.0"
-    "lr0.001_do0.2_pw5.0"
-    "lr0.0005_do0.1_pw3.0"
-    "lr0.0005_do0.2_pw3.0"
+    "lr0.0001_do0.1"
+    "lr0.0001_do0.2"
+    "lr0.0005_do0.1"
+    "lr0.0005_do0.2"
+    "lr0.001_do0.1"
+    "lr0.001_do0.2"
+    "lr0.0005_do0.15"
+    "lr0.0001_do0.15"
 )
 
 CONFIG_NAME=${CONFIGS[$SLURM_ARRAY_TASK_ID]}
