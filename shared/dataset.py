@@ -103,6 +103,9 @@ class ASDAggressionDataset(Dataset):
     # ── Convenience accessors for splitters ──────────────────────────────
     def get_participant_ids(self) -> np.ndarray:
         return self.participant_ids
+    
+    def get_instances(self) -> np.ndarray:
+        return self.instances
 
     def get_session_ids(self) -> np.ndarray:
         return self.session_ids
