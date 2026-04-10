@@ -1,5 +1,4 @@
 import os
-import math
 import numpy
 import torch
 import random
@@ -445,27 +444,22 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         transform the original multivariate time series into the new one vector data space
         transformed date label the same with original label
         '''
-        # init transformed data with list
-        feature = []
+        N = numpy.shape(X)[0]
+        features = numpy.empty((N, final_shapelet_num))
 
-        # transform original time series
-        for i in range(numpy.shape(X)[0]):
-            for j in range(final_shapelet_num):
-            #for j in range(len(candidate)):
-                dist = math.inf
-                candidate_tmp = numpy.asarray(candidate[utility_sort_index[j]])
-                for k in range(numpy.shape(X)[2]-numpy.shape(candidate_tmp)[0]+1):
-                    difference = X[i, int(candidate_dim[utility_sort_index[j]]), 0+k : int(numpy.shape(candidate_tmp)[0])+k] - candidate_tmp
-                    feature_tmp = numpy.linalg.norm(difference)
-                    if feature_tmp < dist:
-                        dist = feature_tmp
-                feature.append(dist)
+        for j in range(final_shapelet_num):
+            shapelet = numpy.asarray(candidate[utility_sort_index[j]])
+            dim = int(candidate_dim[utility_sort_index[j]])
+            L = len(shapelet)
+            # All sliding windows for the relevant channel at once: (N, T-L+1, L)
+            windows = numpy.lib.stride_tricks.sliding_window_view(
+                X[:, dim, :], L, axis=1
+            )
+            # Vectorized min-distance to shapelet over all samples and positions
+            dists = numpy.linalg.norm(windows - shapelet, axis=2)  # (N, T-L+1)
+            features[:, j] = dists.min(axis=1)
 
-        # turn list to array and reshape
-        feature = numpy.asarray(feature)
-        feature = feature.reshape(numpy.shape(X)[0], final_shapelet_num)
-
-        return feature
+        return features
 
     def predict(self, X, batch_size=50):
         """
