@@ -14,4 +14,6 @@ dependencies:
   - joblib
   - pandas
   - tqdm
+  - pip:
+    - fast-pytorch-kmeans
 prefix: /home/watanabe.y/miniconda3/envs/asd_agg_dl

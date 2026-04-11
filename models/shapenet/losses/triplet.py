@@ -2,7 +2,7 @@ import torch
 import numpy
 import random
 from collections import Counter
-from sklearn.cluster import KMeans
+from fast_pytorch_kmeans import KMeans as TorchKMeans
 import timeit
 
 import slide
@@ -32,14 +32,15 @@ class PNTripletLoss(torch.nn.modules.loss._Loss):
             alpha = alpha - 0.2
             device = batch_slide.device
 
-            # KMeans clustering on CPU
-            points = batch_slide.cpu().numpy()
+            # KMeans clustering on GPU
             num_cluster = 2
-            kmeans = KMeans(n_clusters=num_cluster, random_state=self.seed)
-            kmeans.fit(points)
-            cluster_label = kmeans.labels_
+            torch.manual_seed(self.seed)
+            kmeans = TorchKMeans(n_clusters=num_cluster, mode='euclidean', verbose=0)
+            labels_tensor = kmeans.fit_predict(batch_slide)   # stays on GPU
+            cluster_label = labels_tensor.cpu().numpy()
+            points = batch_slide.cpu().numpy()                # needed for sample_list (Phase 2)
             num_cluster_set = Counter(cluster_label)
-            seq_len = numpy.shape(points)[1]
+            seq_len = batch_slide.size(1)
 
             # ------------------------------------------------------------------
             # Phase 1: determine all sample indices needed per cluster (CPU only)
@@ -50,8 +51,9 @@ class PNTripletLoss(torch.nn.modules.loss._Loss):
                     cluster_meta.append(None)
                     continue
 
-                cluster_i = points[numpy.where(cluster_label == ci)]
-                distance_i = kmeans.transform(cluster_i)[:, ci]
+                distance_i = torch.norm(
+                    batch_slide[labels_tensor == ci] - kmeans.centroids[ci], dim=1
+                ).cpu().numpy()
 
                 num_positive = 50 if num_cluster_set[ci] >= 250 else int(num_cluster_set[ci] / 5 + 1)
                 anchor_positive = numpy.argpartition(distance_i, num_positive)[:(num_positive + 1)]
@@ -72,7 +74,7 @@ class PNTripletLoss(torch.nn.modules.loss._Loss):
                 for k in range(num_cluster):
                     if k == ci:
                         continue
-                    neg_points = points[kmeans.labels_ == k]
+                    neg_points = points[cluster_label == k]
                     num_neg_k = 50 if num_cluster_set[k] >= 250 else int(num_cluster_set[k] / 5 + 1)
                     neg_indices = random.sample(range(neg_points.shape[0]), num_neg_k)
 
