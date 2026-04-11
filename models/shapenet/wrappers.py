@@ -195,10 +195,12 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                 print(f"[cache] Resuming encoder from epoch {start_epoch}/{self.epochs}")
 
         # Encoder training
+        total_batches = len(train_generator)
         for i in range(start_epoch, self.epochs):
             epoch_start = timeit.default_timer()
             print(f"=== Epoch {i+1}/{self.epochs} ===")
-            for batch in train_generator:
+            for batch_idx, batch in enumerate(train_generator):
+                print(f"batch {batch_idx+1}/{total_batches}")
                 batch_start = timeit.default_timer()
                 if self.cuda:
                     batch = batch.cuda(self.gpu).float()
@@ -211,7 +213,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                 loss.backward()
                 self.optimizer.step()
                 batch_end = timeit.default_timer()
-                print("batch time: ", (batch_end- batch_start)/60)
+                print(f"  batch time: {(batch_end - batch_start)/60:.3f} min")
 
             epoch_end = timeit.default_timer()
             print(f"epoch {i+1}/{self.epochs} time: {(epoch_end - epoch_start)/60:.3f} min")

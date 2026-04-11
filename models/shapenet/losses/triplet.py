@@ -220,6 +220,6 @@ class PNTripletLoss(torch.nn.modules.loss._Loss):
 
             loss = loss + loss_cluster
             slide_end = timeit.default_timer()
-            print("slide time: ", (slide_end - slide_start) / 60)
+            print(f"  slide time: {(slide_end - slide_start) / 60:.3f} min")
 
         return loss
