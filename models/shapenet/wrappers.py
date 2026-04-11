@@ -150,7 +150,8 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
 
         return self.classifier
 
-    def fit_encoder(self, X, y=None, save_memory=False, verbose=False):
+    def fit_encoder(self, X, y=None, save_memory=False, verbose=False,
+                    prefix_file=None):
         """
         Trains the encoder unsupervisedly using the given training data.
 
@@ -162,6 +163,8 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                doing it after computing the whole loss.
         @param verbose Enables, if True, to monitor which epoch is running in
                the encoder training.
+        @param prefix_file If given, saves an epoch checkpoint after every
+               epoch and resumes from the latest checkpoint on restart.
         """
         train = torch.from_numpy(X).float()
         if self.cuda:
@@ -175,11 +178,26 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
             generator=generator
         )
 
-        #epochs = 0 # Number of performed epochs
+        # Resume from epoch checkpoint if available
+        start_epoch = 0
+        if prefix_file is not None:
+            ckpt_path = prefix_file + '_epoch_ckpt.pth'
+            if os.path.exists(ckpt_path):
+                map_location = (
+                    (lambda storage, loc: storage.cuda(self.gpu))
+                    if self.cuda else
+                    (lambda storage, loc: storage)
+                )
+                ckpt = torch.load(ckpt_path, map_location=map_location)
+                self.encoder.load_state_dict(ckpt['encoder'])
+                self.optimizer.load_state_dict(ckpt['optimizer'])
+                start_epoch = ckpt['epoch'] + 1
+                print(f"[cache] Resuming encoder from epoch {start_epoch}/{self.epochs}")
 
         # Encoder training
-        for i in range(self.epochs):
+        for i in range(start_epoch, self.epochs):
             epoch_start = timeit.default_timer()
+            print(f"=== Epoch {i+1}/{self.epochs} ===")
             for batch in train_generator:
                 batch_start = timeit.default_timer()
                 if self.cuda:
@@ -195,9 +213,18 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                 batch_end = timeit.default_timer()
                 print("batch time: ", (batch_end- batch_start)/60)
 
-            #epochs += 1
             epoch_end = timeit.default_timer()
-            print("epoch time: ", (epoch_end- epoch_start)/60)
+            print(f"epoch {i+1}/{self.epochs} time: {(epoch_end - epoch_start)/60:.3f} min")
+
+            if prefix_file is not None:
+                torch.save(
+                    {
+                        'epoch': i,
+                        'encoder': self.encoder.state_dict(),
+                        'optimizer': self.optimizer.state_dict(),
+                    },
+                    prefix_file + '_epoch_ckpt.pth'
+                )
 
         return self.encoder
 
@@ -228,9 +255,16 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
             self.load_encoder(prefix_file)
         else:
             t0 = timeit.default_timer()
-            self.encoder = self.fit_encoder(X, y=y, save_memory=save_memory, verbose=verbose)
+            self.encoder = self.fit_encoder(
+                X, y=y, save_memory=save_memory, verbose=verbose,
+                prefix_file=prefix_file,
+            )
             print(f"[timing] encoder: {(timeit.default_timer()-t0)/60:.3f} min")
             self.save_encoder(prefix_file)
+            # Remove epoch checkpoint now that the final encoder is saved
+            ckpt_path = prefix_file + '_epoch_ckpt.pth'
+            if os.path.exists(ckpt_path):
+                os.remove(ckpt_path)
 
         # ── Stage 2: Shapelet discovery ───────────────────────────────────────
         # Save shapelet + shapelet_dim + utility_sort_index together so they
