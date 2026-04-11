@@ -10,7 +10,7 @@ dependencies:
   - ipywidgets
   - nbformat
   - scikit-learn
-  - pytorch
+  - pytorch::pytorch-cuda=11.8
   - joblib
   - pandas
   - tqdm

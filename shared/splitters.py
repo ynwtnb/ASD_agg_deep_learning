@@ -34,7 +34,7 @@ def session_splits(dataset: ASDAggressionDataset, test_prop=0.2):
     pids = dataset.unique_participants()
     superposition_lists = dataset.get_superposition_lists()
     session_ids = dataset.get_session_ids()
-    instances = dataset.get_instances()
+    instances = dataset.instances
     all_idx = np.arange(len(dataset))
 
     train_idx = np.array([])
