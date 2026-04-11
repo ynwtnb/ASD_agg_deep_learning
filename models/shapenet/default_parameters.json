@@ -1,12 +1,12 @@
 {
-    "batch_size": 10,
-    "channels": 40,
+    "batch_size": 128,
+    "channels": 20,
     "compared_length": null,
-    "depth": 10,
-    "epochs": 40,
+    "depth": 5,
+    "epochs": 20,
     "in_channels": 1,
     "kernel_size": 3,
     "lr": 0.001,
-    "out_channels": 320,
+    "out_channels": 160,
     "reduced_size": 160
 }
