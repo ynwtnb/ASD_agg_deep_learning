@@ -375,7 +375,6 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         slide_num = 3
         alpha = 0.6
         beta = 6
-        count = 0
         X_slide_num = []
         gama = 0.5
 
@@ -397,7 +396,8 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
 
             self.encoder = self.encoder.eval()
 
-            # encode slide TS
+            # encode slide TS — accumulate in a list, concatenate once at the end
+            reps = []
             with torch.no_grad():
                 for batch in test_generator:
                     if self.cuda:
@@ -406,16 +406,9 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                         batch = batch.float()
                     # 2D to 3D
                     batch.unsqueeze_(1)
-                    batch = self.encoder(batch)
-
-                    batch_np = batch.cpu().detach().numpy()
-                    if count == 0:
-                        representation = batch_np
-                    else:
-                        representation = numpy.concatenate((representation, batch_np), axis=0)
-                    count += 1
+                    reps.append(self.encoder(batch).cpu().detach().numpy())
             self.encoder = self.encoder.train()
-            count = 0
+            representation = numpy.concatenate(reps, axis=0)
             print(f"  encode {m}: {(timeit.default_timer()-te)/60:.3f} min")
             # concatenate the new representation from different slides
             if m == 0 :
