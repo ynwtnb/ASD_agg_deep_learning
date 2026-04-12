@@ -1,4 +1,4 @@
-"""Generates the 8 sweep configuration JSON files for capacity/regularization sweep."""
+"""Generates the 8 sweep configuration JSON files for pos_weight + BatchNorm sweep."""
 
 import json
 import os
@@ -6,17 +6,21 @@ import os
 SWEEP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sweep_configs')
 os.makedirs(SWEEP_DIR, exist_ok=True)
 
-# lr=1e-3 fixed from round 1 results (best AUPRC and AUROC)
-# kernel_size=7 with 8 blocks gives RF=3061, covering full 2880-sample window
-# two architectures to test capacity reduction:
-#   A = [32,32,64,64,128,128,128,128]  ~1M params (narrow pyramid)
-#   B = [32,32,32,32,64,64,64,64]      ~0.3M params (very narrow)
+# previous sweeps established:
+#   - BatchNorm + balanced sampling is unstable at dropout > 0.2
+#   - BatchNorm + shuffle=True + pos_weight should be stable because
+#     natural batch composition gives BatchNorm consistent statistics
+#   - lr=1e-3 is the right regime, lr=5e-4 also works
+#   - raw pos_weight is ~4.0 for this dataset
+#
+# this sweep: shuffle=True, clamped pos_weight, push dropout and weight_decay
+# to control the severe overfitting observed in sweep 1
 
-ARCH_A = [32, 32, 64, 64, 128, 128, 128, 128]
-ARCH_B = [32, 32, 32, 32, 64, 64, 64, 64]
+ARCH = [64, 64, 128, 128, 256, 256, 256, 256]
 
 BASE = {
     "n_input_channels": 10,
+    "channel_list": ARCH,
     "kernel_size": 7,
     "readout": "mean",
     "batch_size": 32,
@@ -25,19 +29,22 @@ BASE = {
     "max_grad_norm": 1.0,
     "lr": 1e-3,
     "warmup_epochs": 5,
+    "max_pos_weight": 10.0,
 }
 
 GRID = [
-    # arch A: narrow pyramid, dropout x weight_decay
-    {"channel_list": ARCH_A, "dropout": 0.3, "weight_decay": 1e-3, "tag": "archA_do0.3_wd1e-3"},
-    {"channel_list": ARCH_A, "dropout": 0.3, "weight_decay": 1e-2, "tag": "archA_do0.3_wd1e-2"},
-    {"channel_list": ARCH_A, "dropout": 0.4, "weight_decay": 1e-3, "tag": "archA_do0.4_wd1e-3"},
-    {"channel_list": ARCH_A, "dropout": 0.4, "weight_decay": 1e-2, "tag": "archA_do0.4_wd1e-2"},
-    # arch B: very narrow, dropout x weight_decay
-    {"channel_list": ARCH_B, "dropout": 0.3, "weight_decay": 1e-3, "tag": "archB_do0.3_wd1e-3"},
-    {"channel_list": ARCH_B, "dropout": 0.3, "weight_decay": 1e-2, "tag": "archB_do0.3_wd1e-2"},
-    {"channel_list": ARCH_B, "dropout": 0.4, "weight_decay": 1e-3, "tag": "archB_do0.4_wd1e-3"},
-    {"channel_list": ARCH_B, "dropout": 0.4, "weight_decay": 1e-2, "tag": "archB_do0.4_wd1e-2"},
+    # baseline reference: sweep 1 winner equivalent with pos_weight
+    {"dropout": 0.2, "weight_decay": 1e-4, "tag": "do0.2_wd1e-4"},
+    # push dropout with light wd
+    {"dropout": 0.3, "weight_decay": 1e-4, "tag": "do0.3_wd1e-4"},
+    {"dropout": 0.4, "weight_decay": 1e-4, "tag": "do0.4_wd1e-4"},
+    {"dropout": 0.5, "weight_decay": 1e-4, "tag": "do0.5_wd1e-4"},
+    # push weight_decay with moderate dropout
+    {"dropout": 0.3, "weight_decay": 1e-3, "tag": "do0.3_wd1e-3"},
+    {"dropout": 0.3, "weight_decay": 5e-3, "tag": "do0.3_wd5e-3"},
+    # combined strong regularization
+    {"dropout": 0.4, "weight_decay": 1e-3, "tag": "do0.4_wd1e-3"},
+    {"dropout": 0.5, "weight_decay": 1e-3, "tag": "do0.5_wd1e-3"},
 ]
 
 for i, combo in enumerate(GRID):

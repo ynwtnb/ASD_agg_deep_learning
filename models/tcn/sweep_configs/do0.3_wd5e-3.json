@@ -1,5 +1,15 @@
 {
     "n_input_channels": 10,
+    "channel_list": [
+        64,
+        64,
+        128,
+        128,
+        256,
+        256,
+        256,
+        256
+    ],
     "kernel_size": 7,
     "readout": "mean",
     "batch_size": 32,
@@ -8,16 +18,7 @@
     "max_grad_norm": 1.0,
     "lr": 0.001,
     "warmup_epochs": 5,
-    "channel_list": [
-        32,
-        32,
-        64,
-        64,
-        128,
-        128,
-        128,
-        128
-    ],
+    "max_pos_weight": 10.0,
     "dropout": 0.3,
-    "weight_decay": 0.001
+    "weight_decay": 0.005
 }
