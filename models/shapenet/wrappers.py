@@ -230,7 +230,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
 
         return self.encoder
 
-    def fit(self, X, y, test, test_labels, prefix_file, cluster_num, save_memory=False, verbose=False, use_cache=False):
+    def fit(self, X, y, test, test_labels, prefix_file, cluster_num, save_memory=False, verbose=False, use_cache=False, max_discovery_samples=500):
         """
         Trains sequentially the encoder unsupervisedly and then the classifier
         using the given labels over the learned features.
@@ -280,7 +280,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
             utility_sort_index = data['utility_sort_index']
         else:
             t0 = timeit.default_timer()
-            shapelet, shapelet_dim, utility_sort_index = self.shapelet_discovery(X, y, cluster_num, batch_size=50)
+            shapelet, shapelet_dim, utility_sort_index = self.shapelet_discovery(X, y, cluster_num, batch_size=50, max_discovery_samples=max_discovery_samples)
             print(f"[timing] discovery: {(timeit.default_timer()-t0)/60:.3f} min")
             self.save_shapelet(prefix_file, shapelet, shapelet_dim)  # keep existing txt format
             numpy.savez(
@@ -339,14 +339,38 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         self.encoder = self.encoder.train()
         return features
 
-    def shapelet_discovery(self, X, train_labels, cluster_num, batch_size = 50):
+    def shapelet_discovery(self, X, train_labels, cluster_num, batch_size=50,
+                           max_discovery_samples=500):
         '''
         slide raw time series as candidates
         encode candidates
         cluster new representations
         select the one nearest to centroid
         trace back original candidates as shapelet
+
+        max_discovery_samples: stratified subsample before sliding to keep
+        memory usage bounded.  With T~2880, D=10, 500 samples needs ~29 GB.
+        Reduce if you see OOM; increase for better shapelet coverage.
         '''
+
+        # Stratified subsample to avoid OOM during sliding and encoding.
+        # The encoder embedding space is already learned, so a representative
+        # subset is sufficient for finding good cluster centroids.
+        N_orig = X.shape[0]
+        if N_orig > max_discovery_samples:
+            classes, counts = numpy.unique(train_labels, return_counts=True)
+            rng = numpy.random.default_rng(self.seed)
+            selected = []
+            for cls, cnt in zip(classes, counts):
+                n_select = max(1, round(max_discovery_samples * cnt / N_orig))
+                cls_idx = numpy.where(train_labels == cls)[0]
+                chosen = rng.choice(cls_idx, min(n_select, len(cls_idx)), replace=False)
+                selected.append(chosen)
+            idx = numpy.sort(numpy.concatenate(selected))
+            X = X[idx]
+            train_labels = train_labels[idx]
+            print(f"  [discovery] stratified subsample: {N_orig} → {len(idx)} samples "
+                  f"(classes: {dict(zip(classes, [sum(train_labels==c) for c in classes]))})")
 
         slide_num = 3
         alpha = 0.6
