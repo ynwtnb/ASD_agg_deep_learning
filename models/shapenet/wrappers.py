@@ -280,7 +280,11 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
             utility_sort_index = data['utility_sort_index']
         else:
             t0 = timeit.default_timer()
-            shapelet, shapelet_dim, utility_sort_index = self.shapelet_discovery(X, y, cluster_num, batch_size=50, max_discovery_samples=max_discovery_samples)
+            shapelet, shapelet_dim, utility_sort_index = self.shapelet_discovery(
+                X, y, cluster_num, batch_size=50,
+                max_discovery_samples=max_discovery_samples,
+                prefix_file=prefix_file,
+            )
             print(f"[timing] discovery: {(timeit.default_timer()-t0)/60:.3f} min")
             self.save_shapelet(prefix_file, shapelet, shapelet_dim)  # keep existing txt format
             numpy.savez(
@@ -289,6 +293,12 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                 shapelet_dim=numpy.array(shapelet_dim),
                 utility_sort_index=utility_sort_index,
             )
+            # Remove per-scale discovery checkpoints now that shapelets are saved
+            for _m in range(3):
+                for _suffix in [f'_discovery_m{_m}.npz', '_discovery_idx.npy']:
+                    _p = prefix_file + _suffix
+                    if os.path.exists(_p):
+                        os.remove(_p)
 
         # ── Stage 3: Shapelet transformation ─────────────────────────────────
         features_cache_path = prefix_file + '_train_features.npy'
@@ -340,7 +350,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         return features
 
     def shapelet_discovery(self, X, train_labels, cluster_num, batch_size=50,
-                           max_discovery_samples=500):
+                           max_discovery_samples=500, prefix_file=None):
         '''
         slide raw time series as candidates
         encode candidates
@@ -351,72 +361,131 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         max_discovery_samples: stratified subsample before sliding to keep
         memory usage bounded.  With T~2880, D=10, 500 samples needs ~29 GB.
         Reduce if you see OOM; increase for better shapelet coverage.
+
+        prefix_file: if given, saves per-scale checkpoints so an interrupted
+        job can resume without re-encoding completed scales.
         '''
 
         # Stratified subsample to avoid OOM during sliding and encoding.
-        # The encoder embedding space is already learned, so a representative
-        # subset is sufficient for finding good cluster centroids.
+        # Save sampled indices so a resumed run uses the exact same subset.
         N_orig = X.shape[0]
         if N_orig > max_discovery_samples:
-            classes, counts = numpy.unique(train_labels, return_counts=True)
-            rng = numpy.random.default_rng(self.seed)
-            selected = []
-            for cls, cnt in zip(classes, counts):
-                n_select = max(1, round(max_discovery_samples * cnt / N_orig))
-                cls_idx = numpy.where(train_labels == cls)[0]
-                chosen = rng.choice(cls_idx, min(n_select, len(cls_idx)), replace=False)
-                selected.append(chosen)
-            idx = numpy.sort(numpy.concatenate(selected))
+            idx_path = (prefix_file + '_discovery_idx.npy') if prefix_file else None
+            if idx_path and os.path.exists(idx_path):
+                idx = numpy.load(idx_path)
+                print(f"  [discovery] loaded subsample idx: {N_orig} → {len(idx)} samples")
+            else:
+                classes, counts = numpy.unique(train_labels, return_counts=True)
+                rng = numpy.random.default_rng(self.seed)
+                selected = []
+                for cls, cnt in zip(classes, counts):
+                    n_select = max(1, round(max_discovery_samples * cnt / N_orig))
+                    cls_idx = numpy.where(train_labels == cls)[0]
+                    chosen = rng.choice(cls_idx, min(n_select, len(cls_idx)), replace=False)
+                    selected.append(chosen)
+                idx = numpy.sort(numpy.concatenate(selected))
+                if idx_path:
+                    numpy.save(idx_path, idx)
             X = X[idx]
             train_labels = train_labels[idx]
             print(f"  [discovery] stratified subsample: {N_orig} → {len(idx)} samples "
-                  f"(classes: {dict(zip(classes, [sum(train_labels==c) for c in classes]))})")
+                  f"(classes: {dict(zip(*numpy.unique(train_labels, return_counts=True)))})")
 
+        N, D, T = X.shape
         slide_num = 3
         alpha = 0.6
         beta = 6
         X_slide_num = []
         gama = 0.5
 
-        X_slides = []  # cache for traceback
+        # Precompute positions per scale for traceback (avoids storing X_slides).
+        # X_slide[m] has shape (S*N*D, L), flattened from (S, N, D, L).
+        # Given index_slide: s = index_slide//(N*D), n = (index_slide%(N*D))//D, d = index_slide%D
+        # → candidate window = X[n, d, positions[s] : positions[s]+L]
+        if T <= 50:
+            _step = 1
+        elif T <= 100:
+            _step = 2
+        elif T <= 300:
+            _step = 3
+        elif T <= 1000:
+            _step = 4
+        elif T <= 1500:
+            _step = 5
+        elif T <= 2000:
+            _step = 7
+        elif T <= 3000:
+            _step = 10
+        else:
+            _step = 100
+        scale_params = []   # list of (L, positions_array) per scale
+
         t0 = timeit.default_timer()
         for m in range(slide_num):
-            # slide the raw time series and the corresponding class and variate label
-            ts = timeit.default_timer()
-            X_slide, candidates_dim, candidates_class_label = slide.slide_MTS_dim_step(X, train_labels, alpha)
-            X_slides.append(X_slide)
-            print(f"  slide {m}: {(timeit.default_timer()-ts)/60:.3f} min | X_slide: {X_slide.shape}")
-            X_slide_num.append(numpy.shape(X_slide)[0])
-            beta =  beta -2
-            alpha = beta/10
+            L_m = int(T * alpha)
+            max_offset_m = T - L_m
+            positions_m = numpy.array([0] + list(range(1, max_offset_m + 1, _step)))
+            scale_params.append((L_m, positions_m))
 
-            te = timeit.default_timer()
-            test = utils.Dataset(X_slide)
-            test_generator = torch.utils.data.DataLoader(test, batch_size=batch_size)
+            ckpt_path = (prefix_file + f'_discovery_m{m}.npz') if prefix_file else None
 
-            self.encoder = self.encoder.eval()
+            if ckpt_path and os.path.exists(ckpt_path):
+                # ── Resume: skip slide+encode for this scale ──────────────────
+                print(f"  [cache] Loading scale {m} from {ckpt_path}")
+                data = numpy.load(ckpt_path, allow_pickle=True)
+                representation        = data['representation']
+                candidates_dim        = list(data['candidates_dim'])
+                candidates_class_label = data['candidates_class_label']
+                X_slide_num.append(int(data['X_slide_num']))
+            else:
+                # ── Slide ─────────────────────────────────────────────────────
+                ts = timeit.default_timer()
+                X_slide, candidates_dim, candidates_class_label = slide.slide_MTS_dim_step(X, train_labels, alpha)
+                print(f"  slide {m}: {(timeit.default_timer()-ts)/60:.3f} min | X_slide: {X_slide.shape}")
+                X_slide_num.append(numpy.shape(X_slide)[0])
 
-            # encode slide TS — accumulate in a list, concatenate once at the end
-            reps = []
-            with torch.no_grad():
-                for batch in test_generator:
-                    if self.cuda:
-                        batch = batch.cuda(self.gpu).float()
-                    else:
-                        batch = batch.float()
-                    # 2D to 3D
-                    batch.unsqueeze_(1)
-                    reps.append(self.encoder(batch).cpu().detach().numpy())
-            self.encoder = self.encoder.train()
-            representation = numpy.concatenate(reps, axis=0)
-            print(f"  encode {m}: {(timeit.default_timer()-te)/60:.3f} min")
+                # ── Encode ────────────────────────────────────────────────────
+                te = timeit.default_timer()
+                test = utils.Dataset(X_slide)
+                test_generator = torch.utils.data.DataLoader(test, batch_size=batch_size)
+
+                self.encoder = self.encoder.eval()
+
+                # encode slide TS — accumulate in a list, concatenate once at the end
+                reps = []
+                with torch.no_grad():
+                    for batch in test_generator:
+                        if self.cuda:
+                            batch = batch.cuda(self.gpu).float()
+                        else:
+                            batch = batch.float()
+                        # 2D to 3D
+                        batch.unsqueeze_(1)
+                        reps.append(self.encoder(batch).cpu().detach().numpy())
+                self.encoder = self.encoder.train()
+                representation = numpy.concatenate(reps, axis=0)
+                print(f"  encode {m}: {(timeit.default_timer()-te)/60:.3f} min")
+
+                # ── Save checkpoint ───────────────────────────────────────────
+                if ckpt_path:
+                    numpy.savez(
+                        ckpt_path,
+                        representation=representation,
+                        candidates_dim=numpy.array(candidates_dim),
+                        candidates_class_label=candidates_class_label,
+                        X_slide_num=numpy.array(X_slide_num[-1]),
+                    )
+
+            beta -= 2
+            alpha = beta / 10
+
             # concatenate the new representation from different slides
-            if m == 0 :
+            if m == 0:
                 representation_all = representation
                 representation_dim = candidates_dim
                 representation_class_label = candidates_class_label
             else:
-                representation_all = numpy.concatenate((representation_all, representation), axis = 0)
+                representation_all = numpy.concatenate((representation_all, representation), axis=0)
                 representation_dim = representation_dim + candidates_dim
                 representation_class_label = numpy.concatenate((representation_class_label, candidates_class_label), axis=0)
 
@@ -457,14 +526,19 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
             nearest_global_idx = int(cluster_global_indices[nearest_local])
             tmp_candidate_first_representation = representation_all[nearest_global_idx]
 
-            # Traceback: find which slide this global index belongs to
+            # Traceback: reconstruct window from X using index arithmetic.
+            # X_slide[k] shape is (S*N*D, L), flattened from (S, N, D, L).
             for k in range(slide_num):
                 end = int(slide_offsets[k]) + X_slide_num[k]
                 if nearest_global_idx < end:
                     index_slide = nearest_global_idx - int(slide_offsets[k])
-                    X_slide_disc = X_slides[k]
-                    candidate_tmp = X_slide_disc[index_slide]
-                    candidate_dim.append(index_slide % numpy.shape(X)[1])
+                    L_k, positions_k = scale_params[k]
+                    s_idx   = index_slide // (N * D)
+                    n_local = (index_slide % (N * D)) // D
+                    d_idx   = index_slide % D
+                    pos     = int(positions_k[s_idx])
+                    candidate_tmp = X[n_local, d_idx, pos : pos + L_k]
+                    candidate_dim.append(d_idx)
                     break
 
             class_label_top = (Counter(class_label_cluster_i).most_common(1)[0][1] / len(class_label_cluster_i))
