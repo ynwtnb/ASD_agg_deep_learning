@@ -578,13 +578,15 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
             shapelet = numpy.asarray(candidate[utility_sort_index[j]])
             dim = int(candidate_dim[utility_sort_index[j]])
             L = len(shapelet)
-            # All sliding windows for the relevant channel at once: (N, T-L+1, L)
-            windows = numpy.lib.stride_tricks.sliding_window_view(
-                X[:, dim, :], L, axis=1
-            )
-            # Vectorized min-distance to shapelet over all samples and positions
-            dists = numpy.linalg.norm(windows - shapelet, axis=2)  # (N, T-L+1)
-            features[:, j] = dists.min(axis=1)
+            # Process in chunks to avoid materialising (N, T-L+1, L) all at once.
+            # chunk_size=200 keeps each subtraction array under ~4 GB.
+            for start in range(0, N, 200):
+                end = min(start + 200, N)
+                windows = numpy.lib.stride_tricks.sliding_window_view(
+                    X[start:end, dim, :], L, axis=1
+                )
+                dists = numpy.linalg.norm(windows - shapelet, axis=2)  # (chunk, T-L+1)
+                features[start:end, j] = dists.min(axis=1)
 
         return features
 
