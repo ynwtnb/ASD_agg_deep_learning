@@ -139,7 +139,8 @@ def normalize(train, test):
 
 
 def fit_parameters(file, train, train_labels, test, test_labels, cuda, gpu,
-                   save_path, cluster_num, save_memory=False, override_epochs=None, seed=42, use_cache=False):
+                   save_path, cluster_num, save_memory=False, override_epochs=None, seed=42, use_cache=False,
+                   max_discovery_samples=500):
     """
     Instantiates a CausalCNNEncoderClassifier from a JSON hyperparameter file,
     fits it on the training data, and returns the trained classifier.
@@ -176,7 +177,8 @@ def fit_parameters(file, train, train_labels, test, test_labels, cuda, gpu,
     return classifier.fit(
         train, train_labels, test, test_labels,
         save_path, cluster_num,
-        save_memory=save_memory, verbose=True, use_cache=use_cache
+        save_memory=save_memory, verbose=True, use_cache=use_cache,
+        max_discovery_samples=max_discovery_samples,
     )
 
 
@@ -219,6 +221,9 @@ def parse_arguments():
                         help='samples per class when --smoke_test is set (default: 5)')
     parser.add_argument('--seed', type=int, default=42,
                         help='random seed for reproducibility (default: 42)')
+    parser.add_argument('--max_discovery_samples', type=int, default=500,
+                        help='max training samples for shapelet discovery (stratified subsample). '
+                             'Lower if OOM during discovery. With T~2880 D=10, 500 needs ~29 GB. (default: 500)')
 
     print('parse arguments succeed !!!')
     return parser.parse_args()
@@ -270,7 +275,8 @@ if __name__ == '__main__':
         classifier = fit_parameters(
             args.hyper, train, train_labels, test, test_labels,
             args.cuda, args.gpu, prefix, args.cluster_num,
-            override_epochs=1, seed=args.seed
+            override_epochs=1, seed=args.seed,
+            max_discovery_samples=args.max_discovery_samples,
         )
         print(f"[timing] fit_parameters (encoder+discovery+transform+svm): {(timeit.default_timer()-t0)/60:.3f} min")
         print("Smoke test passed.")
@@ -298,7 +304,8 @@ if __name__ == '__main__':
                 classifier = fit_parameters(
                     args.hyper, train, train_labels, test, test_labels,
                     args.cuda, args.gpu, prefix, args.cluster_num,
-                    seed=args.seed, use_cache=use_cache
+                    seed=args.seed, use_cache=use_cache,
+                    max_discovery_samples=args.max_discovery_samples,
                 )
                 classifier.save(prefix)
                 with open(prefix + '_parameters.json', 'w') as fp:
@@ -333,7 +340,8 @@ if __name__ == '__main__':
                 classifier = fit_parameters(
                     args.hyper, train, train_labels, test, test_labels,
                     args.cuda, args.gpu, prefix, args.cluster_num,
-                    seed=args.seed, use_cache=use_cache
+                    seed=args.seed, use_cache=use_cache,
+                    max_discovery_samples=args.max_discovery_samples,
                 )
                 classifier.save(prefix)
                 with open(prefix + '_parameters.json', 'w') as fp:
@@ -366,7 +374,8 @@ if __name__ == '__main__':
             classifier = fit_parameters(
                 args.hyper, train, train_labels, test, test_labels,
                 args.cuda, args.gpu, prefix, args.cluster_num,
-                seed=args.seed, use_cache=use_cache
+                seed=args.seed, use_cache=use_cache,
+                max_discovery_samples=args.max_discovery_samples,
             )
             classifier.save(prefix)
             with open(prefix + '_parameters.json', 'w') as fp:
