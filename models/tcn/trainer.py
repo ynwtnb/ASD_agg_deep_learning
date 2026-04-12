@@ -3,6 +3,7 @@ Training loop utilities for the TCN aggression prediction model.
 """
 
 import json
+import os
 from copy import deepcopy
 
 import numpy as np
@@ -112,19 +113,88 @@ def _validate(model, loader, criterion, device):
     return total_loss / n_total, n_correct / n_total, auprc
 
 
+def _save_checkpoint(path, model, optimizer, scheduler, epoch,
+                     best_val_auprc, best_state, epochs_no_improve, history):
+    """
+    Saves full training state to disk for resumption after job interruption.
+
+    Parameters
+    ----------
+    path : str
+        File path for the checkpoint.
+    model : torch.nn.Module
+    optimizer : torch.optim.Optimizer
+    scheduler : torch.optim.lr_scheduler.ReduceLROnPlateau or None
+    epoch : int
+        Zero-indexed epoch that just completed.
+    best_val_auprc : float
+    best_state : dict or None
+    epochs_no_improve : int
+    history : dict
+    """
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict() if scheduler is not None else None,
+        'best_val_auprc': best_val_auprc,
+        'best_state': best_state,
+        'epochs_no_improve': epochs_no_improve,
+        'history': history,
+    }, path)
+
+
+def _load_checkpoint(path, model, optimizer, scheduler, device):
+    """
+    Loads full training state from a checkpoint file.
+
+    Parameters
+    ----------
+    path : str
+    model : torch.nn.Module
+    optimizer : torch.optim.Optimizer
+    scheduler : torch.optim.lr_scheduler.ReduceLROnPlateau or None
+    device : torch.device
+
+    Returns
+    -------
+    epoch : int
+        The epoch to resume from (next epoch index).
+    best_val_auprc : float
+    best_state : dict or None
+    epochs_no_improve : int
+    history : dict
+    """
+    ckpt = torch.load(path, map_location=device)
+    model.load_state_dict(ckpt['model_state_dict'])
+    optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+    if scheduler is not None and ckpt['scheduler_state_dict'] is not None:
+        scheduler.load_state_dict(ckpt['scheduler_state_dict'])
+    start_epoch = ckpt['epoch'] + 1
+    print(f"  resumed from checkpoint at epoch {ckpt['epoch'] + 1}")
+    return (
+        start_epoch,
+        ckpt['best_val_auprc'],
+        ckpt['best_state'],
+        ckpt['epochs_no_improve'],
+        ckpt['history'],
+    )
+
+
 def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
           device, epochs, patience, save_path, max_grad_norm=1.0,
           warmup_epochs=5):
     """
-    Full training loop with linear LR warmup and early stopping on val AUPRC.
+    Full training loop with linear LR warmup, early stopping on val AUPRC,
+    and per-epoch checkpointing for job resumption.
 
     For the first warmup_epochs epochs the learning rate ramps linearly from
     base_lr / 10 to base_lr. After warmup, ReduceLROnPlateau steps on negated
     val AUPRC each epoch.
 
-    AUPRC is used as the early stopping signal rather than val loss because
-    on imbalanced data val loss can decrease while AUPRC degrades if the model
-    drifts toward predicting all-negative.
+    A full checkpoint (model, optimizer, scheduler, epoch, history) is saved
+    after every epoch to save_path + '_checkpoint.pth'. If this file exists
+    at the start of training, the loop resumes from it automatically.
 
     Parameters
     ----------
@@ -153,13 +223,23 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
     best_val_auprc = -1.0
     best_state = None
     epochs_no_improve = 0
+    start_epoch = 0
     history = {
         'train_loss': [], 'train_acc': [],
         'val_loss': [], 'val_acc': [], 'val_auprc': [],
         'lr': [],
     }
 
-    for epoch in range(epochs):
+    # resume from checkpoint if it exists
+    checkpoint_path = save_path + '_checkpoint.pth' if save_path else None
+    if checkpoint_path and os.path.isfile(checkpoint_path):
+        start_epoch, best_val_auprc, best_state, epochs_no_improve, history = \
+            _load_checkpoint(checkpoint_path, model, optimizer, scheduler, device)
+        # restore base_lr from history if available
+        if history['lr']:
+            base_lr = max(history['lr'])
+
+    for epoch in range(start_epoch, epochs):
         # linear warmup: ramp from base_lr/10 to base_lr
         if epoch < warmup_epochs:
             warmup_factor = 0.1 + 0.9 * (epoch / max(warmup_epochs, 1))
@@ -176,6 +256,10 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
         if np.isnan(train_loss):
             print(f"  epoch {epoch + 1:03d}/{epochs} | lr {current_lr:.2e} | SKIPPED (NaN)")
             epochs_no_improve += 1
+            if checkpoint_path:
+                _save_checkpoint(checkpoint_path, model, optimizer, scheduler,
+                                 epoch, best_val_auprc, best_state,
+                                 epochs_no_improve, history)
             if epochs_no_improve >= patience:
                 print(f"  early stopping at epoch {epoch + 1}")
                 break
@@ -209,6 +293,12 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
                 torch.save(best_state, save_path + '_best.pth')
         else:
             epochs_no_improve += 1
+
+        # save full checkpoint after every epoch for job resumption
+        if checkpoint_path:
+            _save_checkpoint(checkpoint_path, model, optimizer, scheduler,
+                             epoch, best_val_auprc, best_state,
+                             epochs_no_improve, history)
 
         if epochs_no_improve >= patience:
             print(f"  early stopping at epoch {epoch + 1}")

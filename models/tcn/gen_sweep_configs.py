@@ -1,4 +1,4 @@
-"""Generates the 8 sweep configuration JSON files for pos_weight + BatchNorm sweep."""
+"""Generates the 8 sweep configuration JSON files for stride subsampling sweep."""
 
 import json
 import os
@@ -6,15 +6,22 @@ import os
 SWEEP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sweep_configs')
 os.makedirs(SWEEP_DIR, exist_ok=True)
 
-# previous sweeps established:
-#   - BatchNorm + balanced sampling is unstable at dropout > 0.2
-#   - BatchNorm + shuffle=True + pos_weight should be stable because
-#     natural batch composition gives BatchNorm consistent statistics
-#   - lr=1e-3 is the right regime, lr=5e-4 also works
-#   - raw pos_weight is ~4.0 for this dataset
+# stable configuration from sweep 1:
+#   BatchNorm, no balanced sampling (shuffle=True), pos_weight=1.0,
+#   dropout=0.2, lr=1e-3, weight_decay=1e-4
 #
-# this sweep: shuffle=True, clamped pos_weight, push dropout and weight_decay
-# to control the severe overfitting observed in sweep 1
+# problem: severe overfitting due to 91.7% overlap between consecutive
+# training instances (~61K instances but far fewer independent examples)
+#
+# fix: stride subsampling within each session before DataLoader construction
+#   stride=1  -> 61K instances (no subsampling, sweep 1 reference)
+#   stride=4  -> ~15K instances, ~33% overlap between adjacent kept instances
+#   stride=6  -> ~10K instances, minimal overlap
+#   stride=8  -> ~7.5K instances, near-zero overlap
+#   stride=12 -> ~5K instances, zero overlap (each kept instance is independent)
+#
+# also test dropout=0.3 with natural batch composition (no balanced sampling)
+# to see if higher regularization is now stable
 
 ARCH = [64, 64, 128, 128, 256, 256, 256, 256]
 
@@ -28,23 +35,22 @@ BASE = {
     "patience": 10,
     "max_grad_norm": 1.0,
     "lr": 1e-3,
+    "weight_decay": 1e-4,
     "warmup_epochs": 5,
-    "max_pos_weight": 10.0,
 }
 
 GRID = [
-    # baseline reference: sweep 1 winner equivalent with pos_weight
-    {"dropout": 0.2, "weight_decay": 1e-4, "tag": "do0.2_wd1e-4"},
-    # push dropout with light wd
-    {"dropout": 0.3, "weight_decay": 1e-4, "tag": "do0.3_wd1e-4"},
-    {"dropout": 0.4, "weight_decay": 1e-4, "tag": "do0.4_wd1e-4"},
-    {"dropout": 0.5, "weight_decay": 1e-4, "tag": "do0.5_wd1e-4"},
-    # push weight_decay with moderate dropout
-    {"dropout": 0.3, "weight_decay": 1e-3, "tag": "do0.3_wd1e-3"},
-    {"dropout": 0.3, "weight_decay": 5e-3, "tag": "do0.3_wd5e-3"},
-    # combined strong regularization
-    {"dropout": 0.4, "weight_decay": 1e-3, "tag": "do0.4_wd1e-3"},
-    {"dropout": 0.5, "weight_decay": 1e-3, "tag": "do0.5_wd1e-3"},
+    # reference: no subsampling, same as sweep 1 winner
+    {"train_stride": 1,  "dropout": 0.2, "tag": "stride1_do0.2"},
+    # stride subsampling with known-stable dropout
+    {"train_stride": 4,  "dropout": 0.2, "tag": "stride4_do0.2"},
+    {"train_stride": 6,  "dropout": 0.2, "tag": "stride6_do0.2"},
+    {"train_stride": 8,  "dropout": 0.2, "tag": "stride8_do0.2"},
+    {"train_stride": 12, "dropout": 0.2, "tag": "stride12_do0.2"},
+    # test whether higher dropout is stable without balanced sampling
+    {"train_stride": 4,  "dropout": 0.3, "tag": "stride4_do0.3"},
+    {"train_stride": 6,  "dropout": 0.3, "tag": "stride6_do0.3"},
+    {"train_stride": 8,  "dropout": 0.3, "tag": "stride8_do0.3"},
 ]
 
 for i, combo in enumerate(GRID):

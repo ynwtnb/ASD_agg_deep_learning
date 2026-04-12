@@ -95,39 +95,57 @@ def compute_norm_stats(subset):
     return mean, std
 
 
-# ============= Class Imbalance =============
+# ============= Stride Subsampling =============
 
-def compute_pos_weight(subset, max_pos_weight=10.0):
+def subsample_train_subset(subset, stride, seed=42):
     """
-    Computes clamped BCE pos_weight from a training Subset.
+    Subsamples a training Subset by taking every stride-th instance per session.
 
-    Class rebalancing is handled in the loss via pos_weight rather than via
-    WeightedRandomSampler. This preserves the natural data distribution in
-    each mini-batch, giving BatchNorm stable per-batch statistics. Balanced
-    sampling creates batches with ~50% positive instances whose signal
-    characteristics differ sharply from negatives, causing volatile BatchNorm
-    statistics and gradient instability at dropout > 0.2.
+    Consecutive instances overlap by (n_obs_bins - 1) / n_obs_bins = 91.7%.
+    Training on all of them wastes optimizer capacity on near-duplicate
+    gradients and enables memorization. Subsampling with stride=6 reduces
+    overlap to ~50%, yielding more independent information per batch while
+    preserving the temporal distribution of positive and negative instances.
+
+    Normalization stats should be computed from the full (un-subsampled)
+    training split so they reflect the true data distribution.
 
     Parameters
     ----------
     subset : torch.utils.data.Subset
-    max_pos_weight : float
-        Upper bound for pos_weight to limit gradient amplification.
+    stride : int
+        Take every stride-th instance within each session.
+    seed : int
+        Random seed for reproducibility of session ordering.
 
     Returns
     -------
-    pos_weight : torch.Tensor of shape (1,)
+    subsampled : torch.utils.data.Subset
     """
-    idx = np.asarray(subset.indices).astype(int)
-    labels = subset.dataset.labels[idx]
-    n_pos = float(labels.sum())
-    n_neg = float(len(labels) - n_pos)
-    raw_weight = n_neg / max(n_pos, 1.0)
-    clamped = min(raw_weight, max_pos_weight)
-    weight = torch.tensor([clamped], dtype=torch.float32)
-    print(f"  class imbalance -- n_pos: {int(n_pos)}, n_neg: {int(n_neg)}, "
-          f"raw pos_weight: {raw_weight:.2f}, clamped: {clamped:.2f}")
-    return weight
+    dataset = subset.dataset
+    train_idx = np.asarray(subset.indices).astype(int)
+
+    pids = dataset.get_participant_ids()[train_idx]
+    session_ids = dataset.get_session_ids()[train_idx]
+
+    keep_idx = []
+    for pid in np.unique(pids):
+        pid_mask = pids == pid
+        pid_idx = train_idx[pid_mask]
+        pid_sessions = session_ids[pid_mask]
+
+        for sess in np.unique(pid_sessions):
+            sess_mask = pid_sessions == sess
+            sess_idx = pid_idx[sess_mask]
+            # take every stride-th instance, preserving temporal order
+            keep_idx.extend(sess_idx[::stride].tolist())
+
+    n_orig = len(train_idx)
+    n_kept = len(keep_idx)
+    n_pos = int(dataset.labels[np.array(keep_idx)].sum())
+    print(f"  stride subsampling -- {n_orig} -> {n_kept} instances "
+          f"(stride={stride}), {n_pos} positive")
+    return Subset(dataset, keep_idx)
 
 
 # ============= Val Split =============
@@ -227,11 +245,12 @@ def run_fold(train_subset, test_subset, params, device, save_path,
     Executes one train/evaluate cycle for a single fold.
 
     An inner chronological val split is created from train_subset via
-    make_val_split. Normalization stats and pos_weight are derived from the
-    inner training split only. Class rebalancing uses clamped pos_weight in
-    BCEWithLogitsLoss with natural batch composition (shuffle=True, no
-    balanced sampling) to keep BatchNorm statistics stable. Threshold for
-    test evaluation is selected by maximising F1 on val predictions.
+    make_val_split. Normalization stats are computed from the full inner
+    training split. The inner training split is then stride-subsampled to
+    reduce instance overlap before DataLoader construction. No class
+    rebalancing is applied (pos_weight=1.0, shuffle=True) to keep BatchNorm
+    statistics stable. Threshold for test evaluation is selected by
+    maximising F1 on val predictions.
 
     Parameters
     ----------
@@ -253,7 +272,14 @@ def run_fold(train_subset, test_subset, params, device, save_path,
         f"  val: {len(inner_val)}  test: {len(test_subset)} instances"
     )
 
+    # compute norm stats from full inner train before subsampling
     mean, std = compute_norm_stats(inner_train)
+
+    # subsample training instances to reduce overlap-driven memorization
+    train_stride = params.get('train_stride', 1)
+    if train_stride > 1:
+        inner_train = subsample_train_subset(inner_train, stride=train_stride)
+
     train_norm = NormSubset(inner_train, mean, std)
     val_norm = NormSubset(inner_val, mean, std)
     test_norm = NormSubset(test_subset, mean, std)
@@ -279,9 +305,9 @@ def run_fold(train_subset, test_subset, params, device, save_path,
             torch.load(save_path + '_best.pth', map_location=device)
         )
     else:
-        max_pw = params.get('max_pos_weight', 10.0)
-        pos_weight = compute_pos_weight(inner_train, max_pos_weight=max_pw).to(device)
-        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        # no pos_weight: BatchNorm is unstable when minority-class gradients
+        # are amplified (either via pos_weight or balanced sampling)
+        criterion = nn.BCEWithLogitsLoss()
 
         optimizer = torch.optim.Adam(
             model.parameters(),
