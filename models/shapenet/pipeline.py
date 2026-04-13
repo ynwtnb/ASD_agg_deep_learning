@@ -79,17 +79,23 @@ def load_dataset(data_path, bin_size, num_observation_frames, num_prediction_fra
 
 def subset_to_numpy(subset):
     """
-    Extracts numpy arrays (X, y) from a torch Subset of ASDAggressionDataset.
+    Extracts numpy arrays (X, y, meta) from a torch Subset of ASDAggressionDataset.
 
     Returns
     -------
     X : np.ndarray, shape (N, C, T)
     y : np.ndarray, shape (N,)
+    meta : dict with keys 'participant_ids', 'session_ids', 'superposition_lists'
     """
     indices = np.asarray(subset.indices).astype(int)
     X = subset.dataset.instances[indices]
     y = subset.dataset.labels[indices]
-    return X, y
+    meta = {
+        'participant_ids': subset.dataset.participant_ids[indices],
+        'session_ids': subset.dataset.session_ids[indices],
+        'superposition_lists': subset.dataset.superposition_lists[indices],
+    }
+    return X, y, meta
 
 
 def make_smoke_split(dataset, n_per_class):
@@ -140,7 +146,7 @@ def normalize(train, test):
 
 def fit_parameters(file, train, train_labels, test, test_labels, cuda, gpu,
                    save_path, cluster_num, save_memory=False, override_epochs=None, seed=42, use_cache=False,
-                   max_discovery_samples=500):
+                   max_discovery_samples=500, test_meta=None):
     """
     Instantiates a CausalCNNEncoderClassifier from a JSON hyperparameter file,
     fits it on the training data, and returns the trained classifier.
@@ -179,6 +185,7 @@ def fit_parameters(file, train, train_labels, test, test_labels, cuda, gpu,
         save_path, cluster_num,
         save_memory=save_memory, verbose=True, use_cache=use_cache,
         max_discovery_samples=max_discovery_samples,
+        test_meta=test_meta,
     )
 
 
@@ -285,8 +292,8 @@ if __name__ == '__main__':
     elif args.split == 'loso':
         for test_pid, train_subset, test_subset in loso_splits(dataset):
             print(f"\n=== LOSO fold: test participant {test_pid} ===")
-            train, train_labels = subset_to_numpy(train_subset)
-            test, test_labels = subset_to_numpy(test_subset)
+            train, train_labels, _ = subset_to_numpy(train_subset)
+            test, test_labels, test_meta = subset_to_numpy(test_subset)
             train, test = normalize(train, test)
             print(f"  train={len(train)}, test={len(test)}")
 
@@ -306,6 +313,7 @@ if __name__ == '__main__':
                     args.cuda, args.gpu, prefix, args.cluster_num,
                     seed=args.seed, use_cache=use_cache,
                     max_discovery_samples=args.max_discovery_samples,
+                    test_meta=test_meta,
                 )
                 classifier.save(prefix)
                 with open(prefix + '_parameters.json', 'w') as fp:
@@ -323,8 +331,8 @@ if __name__ == '__main__':
     elif args.split == 'kfold':
         for fold, train_subset, test_subset in kfold_participant_splits(dataset, n_splits=args.n_splits):
             print(f"\n=== K-Fold: fold {fold} ===")
-            train, train_labels = subset_to_numpy(train_subset)
-            test, test_labels = subset_to_numpy(test_subset)
+            train, train_labels, _ = subset_to_numpy(train_subset)
+            test, test_labels, test_meta = subset_to_numpy(test_subset)
             train, test = normalize(train, test)
             print(f"  train={len(train)}, test={len(test)}")
 
@@ -342,6 +350,7 @@ if __name__ == '__main__':
                     args.cuda, args.gpu, prefix, args.cluster_num,
                     seed=args.seed, use_cache=use_cache,
                     max_discovery_samples=args.max_discovery_samples,
+                    test_meta=test_meta,
                 )
                 classifier.save(prefix)
                 with open(prefix + '_parameters.json', 'w') as fp:
@@ -359,8 +368,8 @@ if __name__ == '__main__':
     elif args.split == 'session':
         print("\n=== Session split ===")
         train_subset, test_subset = session_splits(dataset)
-        train, train_labels = subset_to_numpy(train_subset)
-        test, test_labels = subset_to_numpy(test_subset)
+        train, train_labels, _ = subset_to_numpy(train_subset)
+        test, test_labels, test_meta = subset_to_numpy(test_subset)
         train, test = normalize(train, test)
         print(f"  train={len(train)}, test={len(test)}")
 
@@ -376,6 +385,7 @@ if __name__ == '__main__':
                 args.cuda, args.gpu, prefix, args.cluster_num,
                 seed=args.seed, use_cache=use_cache,
                 max_discovery_samples=args.max_discovery_samples,
+                test_meta=test_meta,
             )
             classifier.save(prefix)
             with open(prefix + '_parameters.json', 'w') as fp:
