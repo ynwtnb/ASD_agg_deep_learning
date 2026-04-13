@@ -13,7 +13,7 @@ from sklearn.gaussian_process import GaussianProcessClassifier
 from sklearn.gaussian_process.kernels import RBF
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.naive_bayes import GaussianNB
-from sklearn.svm import SVC
+from cuml.svm import SVC
 import timeit
 
 import utils
@@ -312,6 +312,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
             numpy.save(features_cache_path, features)
 
         # ── Stage 4: SVM (fast — no cache needed) ────────────────────────────
+        print("[timing] SVM training started")
         t0 = timeit.default_timer()
         self.classifier = self.fit_svm_linear(features, y)
         print(f"[timing] SVM: {(timeit.default_timer()-t0)/60:.3f} min")
