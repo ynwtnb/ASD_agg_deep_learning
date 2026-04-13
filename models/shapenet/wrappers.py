@@ -13,7 +13,9 @@ from sklearn.gaussian_process import GaussianProcessClassifier
 from sklearn.gaussian_process.kernels import RBF
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.naive_bayes import GaussianNB
-from sklearn.svm import SVC
+from cuml.svm import SVC
+from sklearn.metrics import roc_auc_score, average_precision_score
+import json
 import timeit
 
 import utils
@@ -230,7 +232,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
 
         return self.encoder
 
-    def fit(self, X, y, test, test_labels, prefix_file, cluster_num, save_memory=False, verbose=False, use_cache=False, max_discovery_samples=500):
+    def fit(self, X, y, test, test_labels, prefix_file, cluster_num, save_memory=False, verbose=False, use_cache=False, max_discovery_samples=500, test_meta=None):
         """
         Trains sequentially the encoder unsupervisedly and then the classifier
         using the given labels over the learned features.
@@ -312,10 +314,39 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
             numpy.save(features_cache_path, features)
 
         # ── Stage 4: SVM (fast — no cache needed) ────────────────────────────
+        print("[timing] SVM training started")
         t0 = timeit.default_timer()
         self.classifier = self.fit_svm_linear(features, y)
         print(f"[timing] SVM: {(timeit.default_timer()-t0)/60:.3f} min")
-        print("svm linear Accuracy: " + str(self.score(test, test_labels, shapelet, shapelet_dim, utility_sort_index, final_shapelet_num)))
+
+        # ── Evaluation ────────────────────────────────────────────────────────
+        test_features = self.shapelet_transformation(test, shapelet, shapelet_dim, utility_sort_index, final_shapelet_num)
+        y_pred = self.classifier.predict(test_features)
+        decision_scores = self.classifier.decision_function(test_features)
+
+        accuracy = self.classifier.score(test_features, test_labels)
+        auroc = roc_auc_score(test_labels, decision_scores)
+        auprc = average_precision_score(test_labels, decision_scores)
+
+        print(f"svm linear Accuracy: {accuracy:.4f} | AUROC: {auroc:.4f} | AUPRC: {auprc:.4f}")
+
+        if prefix_file is not None:
+            results = {
+                'accuracy': accuracy,
+                'auroc': auroc,
+                'auprc': auprc,
+                'y_true': test_labels.tolist(),
+                'y_pred': numpy.asarray(y_pred).tolist(),
+                'decision_scores': numpy.asarray(decision_scores).tolist(),
+            }
+            if test_meta is not None:
+                results['participant_ids'] = numpy.asarray(test_meta['participant_ids']).tolist()
+                results['session_ids'] = numpy.asarray(test_meta['session_ids']).tolist()
+                results['superposition_lists'] = numpy.asarray(test_meta['superposition_lists']).tolist()
+            results_path = prefix_file + '_results.json'
+            with open(results_path, 'w') as fp:
+                json.dump(results, fp)
+            print(f"[saved] results → {results_path}")
 
         return self
 
