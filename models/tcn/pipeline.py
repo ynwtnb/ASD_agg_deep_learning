@@ -95,6 +95,34 @@ def compute_norm_stats(subset):
     return mean, std
 
 
+# ============= Class Imbalance =============
+
+def compute_pos_weight(subset, max_pos_weight=10.0):
+    """
+    Computes clamped BCE pos_weight from a training Subset.
+
+    Parameters
+    ----------
+    subset : torch.utils.data.Subset
+    max_pos_weight : float
+        Upper bound for pos_weight to limit gradient amplification.
+
+    Returns
+    -------
+    pos_weight : torch.Tensor of shape (1,)
+    """
+    idx = np.asarray(subset.indices).astype(int)
+    labels = subset.dataset.labels[idx]
+    n_pos = float(labels.sum())
+    n_neg = float(len(labels) - n_pos)
+    raw_weight = n_neg / max(n_pos, 1.0)
+    clamped = min(raw_weight, max_pos_weight)
+    weight = torch.tensor([clamped], dtype=torch.float32)
+    print(f"  class imbalance -- n_pos: {int(n_pos)}, n_neg: {int(n_neg)}, "
+          f"raw pos_weight: {raw_weight:.2f}, clamped: {clamped:.2f}")
+    return weight
+
+
 # ============= Stride Subsampling =============
 
 def subsample_train_subset(subset, stride, seed=42):
@@ -102,13 +130,9 @@ def subsample_train_subset(subset, stride, seed=42):
     Subsamples a training Subset by taking every stride-th instance per session.
 
     Consecutive instances overlap by (n_obs_bins - 1) / n_obs_bins = 91.7%.
-    Training on all of them wastes optimizer capacity on near-duplicate
-    gradients and enables memorization. Subsampling with stride=6 reduces
-    overlap to ~50%, yielding more independent information per batch while
-    preserving the temporal distribution of positive and negative instances.
-
-    Normalization stats should be computed from the full (un-subsampled)
-    training split so they reflect the true data distribution.
+    Subsampling reduces this overlap and provides more independent information
+    per batch. Normalization stats should be computed from the full
+    (un-subsampled) training split so they reflect the true data distribution.
 
     Parameters
     ----------
@@ -137,7 +161,6 @@ def subsample_train_subset(subset, stride, seed=42):
         for sess in np.unique(pid_sessions):
             sess_mask = pid_sessions == sess
             sess_idx = pid_idx[sess_mask]
-            # take every stride-th instance, preserving temporal order
             keep_idx.extend(sess_idx[::stride].tolist())
 
     n_orig = len(train_idx)
@@ -246,11 +269,11 @@ def run_fold(train_subset, test_subset, params, device, save_path,
 
     An inner chronological val split is created from train_subset via
     make_val_split. Normalization stats are computed from the full inner
-    training split. The inner training split is then stride-subsampled to
-    reduce instance overlap before DataLoader construction. No class
-    rebalancing is applied (pos_weight=1.0, shuffle=True) to keep BatchNorm
-    statistics stable. Threshold for test evaluation is selected by
-    maximising F1 on val predictions.
+    training split. The inner training split is then optionally stride-
+    subsampled. Class rebalancing via pos_weight is controlled by the
+    max_pos_weight config parameter (0 = neutral, >0 = clamped dynamic).
+    Threshold for test evaluation is selected by maximising F1 on val
+    predictions.
 
     Parameters
     ----------
@@ -305,9 +328,15 @@ def run_fold(train_subset, test_subset, params, device, save_path,
             torch.load(save_path + '_best.pth', map_location=device)
         )
     else:
-        # no pos_weight: BatchNorm is unstable when minority-class gradients
-        # are amplified (either via pos_weight or balanced sampling)
-        criterion = nn.BCEWithLogitsLoss()
+        # pos_weight controlled by max_pos_weight config parameter:
+        #   absent or 0 -> neutral loss (no class rebalancing)
+        #   > 0         -> clamped dynamic pos_weight from training labels
+        max_pw = params.get('max_pos_weight', 0)
+        if max_pw > 0:
+            pos_weight = compute_pos_weight(inner_train, max_pos_weight=max_pw).to(device)
+            criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        else:
+            criterion = nn.BCEWithLogitsLoss()
 
         optimizer = torch.optim.Adam(
             model.parameters(),

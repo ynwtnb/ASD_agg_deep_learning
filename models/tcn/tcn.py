@@ -4,7 +4,6 @@ Temporal Convolutional Network for binary aggression prediction from wearable bi
 
 import torch
 import torch.nn as nn
-from torch.nn.utils import weight_norm
 
 
 # ============= Constants =============
@@ -14,16 +13,7 @@ DEFAULT_CHANNEL_LIST = [64, 64, 128, 128, 256, 256, 256, 256]
 DEFAULT_KERNEL_SIZE = 7
 DEFAULT_DROPOUT = 0.2
 DEFAULT_READOUT = 'mean'    # 'last' | 'mean' | 'adaptive_max'
-
-# Receptive field with defaults:
-# RF = 1 + 2*(7-1)*(1+2+4+8+16+32+64+128) = 3061 samples
-# Full window = 12*16*15 = 2880 samples; RF exceeds window at all readout positions.
-#
-# Readout default is 'mean' rather than 'last' because pre-aggression physiological
-# buildup (EDA arousal, HR elevation) can begin minutes before onset and is
-# distributed across the observation window rather than concentrated at the final
-# timestep. Mean pooling weights all timesteps equally and is more robust to
-# annotation timing variability in staff-coded aggression labels.
+DEFAULT_N_GROUPS = 8
 
 
 # ============= Helpers =============
@@ -46,39 +36,44 @@ class Chomp1d(nn.Module):
         return x[:, :, :-self.chomp_size]
 
 
-def _make_causal_conv(
-    n_in: int,
-    n_out: int,
-    kernel_size: int,
-    padding: int,
-    dilation: int,
-) -> nn.Conv1d:
+def _n_groups_for(n_channels, target_groups=DEFAULT_N_GROUPS):
     """
-    Constructs a weight-normalized Conv1d with causal padding.
+    Returns largest divisor of n_channels that is <= target_groups.
+
+    GroupNorm requires n_channels % n_groups == 0. This helper finds a
+    valid group count close to the target without requiring channel widths
+    to be exact multiples of DEFAULT_N_GROUPS.
 
     Parameters
     ----------
-    n_in : int
-    n_out : int
-    kernel_size : int
-    padding : int
-        Symmetric padding; right side is removed by Chomp1d.
-    dilation : int
+    n_channels : int
+    target_groups : int
 
     Returns
     -------
-    conv : nn.Conv1d
+    n_groups : int
     """
-    conv = nn.Conv1d(n_in, n_out, kernel_size, padding=padding, dilation=dilation)
-    conv.weight.data.normal_(0, 0.01)
-    return weight_norm(conv)
+    for g in range(target_groups, 0, -1):
+        if n_channels % g == 0:
+            return g
+    return 1
 
 
 # ============= Residual Block =============
 
 class TemporalBlock(nn.Module):
     """
-    Single TCN residual block: two dilated causal convolutions with weight normalization.
+    Single TCN residual block with GroupNorm for activation normalization.
+
+    Architecture per block:
+        Conv1d -> Chomp1d -> GroupNorm -> ReLU -> Dropout ->
+        Conv1d -> Chomp1d -> GroupNorm -> ReLU -> Dropout
+
+    GroupNorm normalizes per-instance across channel groups, making it
+    independent of batch composition. BatchNorm was unstable on this dataset
+    because positive instances (pre-aggression arousal) and negative instances
+    (baseline physiology) have different signal distributions, causing volatile
+    per-batch statistics.
 
     Parameters
     ----------
@@ -101,12 +96,14 @@ class TemporalBlock(nn.Module):
         causal_pad = (kernel_size - 1) * dilation
 
         self.causal = nn.Sequential(
-            _make_causal_conv(n_inputs, n_outputs, kernel_size, causal_pad, dilation),
+            nn.Conv1d(n_inputs, n_outputs, kernel_size, padding=causal_pad, dilation=dilation),
             Chomp1d(causal_pad),
+            nn.GroupNorm(_n_groups_for(n_outputs), n_outputs),
             nn.ReLU(),
             nn.Dropout(dropout),
-            _make_causal_conv(n_outputs, n_outputs, kernel_size, causal_pad, dilation),
+            nn.Conv1d(n_outputs, n_outputs, kernel_size, padding=causal_pad, dilation=dilation),
             Chomp1d(causal_pad),
+            nn.GroupNorm(_n_groups_for(n_outputs), n_outputs),
             nn.ReLU(),
             nn.Dropout(dropout),
         )
@@ -116,6 +113,16 @@ class TemporalBlock(nn.Module):
             if n_inputs != n_outputs else None
         )
         self.act_out = nn.ReLU()
+
+        self._init_weights()
+
+    def _init_weights(self):
+        """Kaiming initialization for Conv1d layers."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -185,10 +192,9 @@ class AggressionTCN(nn.Module):
     Full TCN model for binary aggression prediction.
 
     Architecture:
-        1. Per-channel input projection (1x1 Conv): maps heterogeneous input
-           channels to a uniform hidden width before temporal processing.
-           Decouples amplitude-scale differences from temporal pattern learning.
-        2. TCN backbone: stacked dilated causal residual blocks.
+        1. Per-channel input projection (1x1 Conv + GroupNorm + ReLU): maps
+           heterogeneous input channels to a uniform hidden width.
+        2. TCN backbone: stacked dilated causal residual blocks with GroupNorm.
         3. Readout: collapses the temporal axis to a single vector.
         4. Linear classifier: single logit for BCEWithLogitsLoss.
 
@@ -199,16 +205,13 @@ class AggressionTCN(nn.Module):
     Parameters
     ----------
     n_input_channels : int
-        Number of biosignal channels. Must equal len(selected_feat) = 10.
+        Number of biosignal channels.
     channel_list : list of int
         Per-block output channel sizes. Controls depth and width.
     kernel_size : int
     dropout : float
     readout : str
-        Temporal aggregation strategy after the TCN backbone.
-        'mean'         -- mean over all time steps. Default: pre-aggression
-                          buildup is distributed across the window so uniform
-                          temporal weighting is more appropriate than last-step.
+        'mean'         -- mean over all time steps (default).
         'last'         -- output at the final time step only.
         'adaptive_max' -- AdaptiveMaxPool1d(1), captures peak activation.
     """
@@ -229,7 +232,14 @@ class AggressionTCN(nn.Module):
                 f"readout must be 'last', 'mean', or 'adaptive_max', got '{readout}'"
             )
 
-        self.input_proj = nn.Conv1d(n_input_channels, channel_list[0], kernel_size=1)
+        self.input_proj = nn.Sequential(
+            nn.Conv1d(n_input_channels, channel_list[0], kernel_size=1),
+            nn.GroupNorm(_n_groups_for(channel_list[0]), channel_list[0]),
+            nn.ReLU(),
+        )
+        nn.init.kaiming_normal_(self.input_proj[0].weight, nonlinearity='relu')
+        nn.init.zeros_(self.input_proj[0].bias)
+
         self.tcn = TCN(channel_list[0], channel_list, kernel_size, dropout)
 
         self.readout = readout
@@ -242,8 +252,9 @@ class AggressionTCN(nn.Module):
         """Receptive field in input samples."""
         rf = 1
         for block in self.tcn.blocks:
-            causal_pad = block.causal[1].chomp_size   # Chomp1d is index 1
-            rf += 2 * causal_pad
+            for m in block.causal.modules():
+                if isinstance(m, Chomp1d):
+                    rf += m.chomp_size
         return rf
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -257,8 +268,8 @@ class AggressionTCN(nn.Module):
         logits : torch.Tensor, shape (batch, 1)
             Raw logit; apply sigmoid for probability.
         """
-        x = self.input_proj(x)              # (batch, channel_list[0], seq_len)
-        x = self.tcn(x)                     # (batch, channel_list[-1], seq_len)
+        x = self.input_proj(x)
+        x = self.tcn(x)
 
         if self.readout == 'last':
             x = x[:, :, -1]
@@ -267,4 +278,4 @@ class AggressionTCN(nn.Module):
         elif self.readout == 'adaptive_max':
             x = self._pool(x).squeeze(2)
 
-        return self.classifier(x)           # (batch, 1)
+        return self.classifier(x)
