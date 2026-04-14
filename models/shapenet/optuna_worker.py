@@ -44,7 +44,7 @@ def sample_params(trial):
         'reduced_size':       trial.suggest_categorical('reduced_size', [80, 120, 160, 200]),
         'out_channels':       trial.suggest_categorical('out_channels', [80, 120, 160, 200]),
         'kernel_size':        trial.suggest_int('kernel_size', 2, 5),
-        'epochs':             trial.suggest_int('epochs', 10, 50, step=10),
+        'epochs':             trial.suggest_int('epochs', 50, 200, step=50),
         'lr':                 trial.suggest_float('lr', 1e-4, 1e-2, log=True),
         'final_shapelet_num': trial.suggest_int('final_shapelet_num', 3, 15),
         'compared_length':    None,
