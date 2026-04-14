@@ -6,11 +6,12 @@
 #   bash submit_optuna.sh <n_jobs>
 #   bash submit_optuna.sh 20
 
-N_JOBS=${1:-10}
+N_JOBS=${1:-8}
 
 DATA_PATH="/scratch/borasaniya.t/CBS_DATA_ASD_ONLY/"
 SAVE_PATH="../experiments/results/shapenet_tuning"
-STORAGE="sqlite:////$(realpath ../experiments/results/shapenet_tuning/optuna.db)"
+mkdir -p "$SAVE_PATH"
+STORAGE="sqlite:////$(realpath "$SAVE_PATH")/optuna.db"
 STUDY_NAME="shapenet_tuning"
 CLUSTER_NUM=20
 SPLIT="session"
@@ -21,8 +22,6 @@ MAX_DISCOVERY_SAMPLES=500
 VAL_PROP=0.2
 STRIDE=6
 GPU=0
-
-mkdir -p "$SAVE_PATH"
 
 echo "Submitting $N_JOBS Optuna worker jobs"
 echo "  Study:   $STUDY_NAME"
