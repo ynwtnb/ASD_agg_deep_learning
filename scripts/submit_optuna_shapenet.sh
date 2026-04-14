@@ -10,7 +10,8 @@ N_JOBS=${1:-8}
 
 DATA_PATH="/scratch/borasaniya.t/CBS_DATA_ASD_ONLY/"
 SAVE_PATH="../experiments/results/shapenet_tuning"
-mkdir -p "$SAVE_PATH"
+LOG_DIR="../experiments/logs/shapenet_tuning"
+mkdir -p "$SAVE_PATH" "$LOG_DIR"
 STORAGE="sqlite:////$(realpath "$SAVE_PATH")/optuna.db"
 STUDY_NAME="shapenet_tuning"
 CLUSTER_NUM=20
@@ -38,8 +39,8 @@ for i in $(seq 1 "$N_JOBS"); do
 #SBATCH --time=8:00:00
 #SBATCH --partition=gpu
 #SBATCH --mem=64G
-#SBATCH -o output_optuna_${i}_%j.txt
-#SBATCH -e error_optuna_${i}_%j.txt
+#SBATCH -o $(realpath "$LOG_DIR")/output_optuna_${i}_%j.txt
+#SBATCH -e $(realpath "$LOG_DIR")/error_optuna_${i}_%j.txt
 #SBATCH --mail-user=watanabe.y@northeastern.edu
 #SBATCH --mail-type=FAIL
 
