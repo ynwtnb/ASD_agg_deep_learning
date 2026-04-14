@@ -13,7 +13,7 @@ from sklearn.gaussian_process import GaussianProcessClassifier
 from sklearn.gaussian_process.kernels import RBF
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.naive_bayes import GaussianNB
-from cuml.svm import SVC
+from cuml.svm import LinearSVC
 from sklearn.metrics import roc_auc_score, average_precision_score
 import json
 import timeit
@@ -149,7 +149,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         @param features Computed features of the training set.
         @param y Training labels.
         """
-        self.classifier = SVC(kernel='linear' ,gamma='auto')
+        self.classifier = LinearSVC(class_weight='balanced')
         self.classifier.fit(features, y)
 
         return self.classifier
