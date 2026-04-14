@@ -28,7 +28,8 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
 
     def __init__(self, compared_length,
                  batch_size, epochs, lr,
-                 encoder, params, in_channels, cuda=False, gpu=0, seed=42):
+                 encoder, params, in_channels, cuda=False, gpu=0, seed=42,
+                 final_shapelet_num=3):
         self.architecture = ''
         self.cuda = cuda
         self.gpu = gpu
@@ -39,6 +40,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         self.params = params
         self.in_channels = in_channels
         self.seed = seed
+        self.final_shapelet_num = final_shapelet_num
         self.loss = losses.triplet.PNTripletLoss(
             compared_length, seed=seed
         )
@@ -250,7 +252,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         @param use_cache If True, load intermediate results from disk when
                available and save them after each stage completes.
         """
-        final_shapelet_num = 3
+        final_shapelet_num = self.final_shapelet_num
 
         # ── Stage 1: Encoder ─────────────────────────────────────────────────
         encoder_path = prefix_file + '_' + self.architecture + '_encoder.pth'
@@ -684,7 +686,7 @@ class CausalCNNEncoderClassifier(TimeSeriesEncoderClassifier):
     def __init__(self, compared_length=50, batch_size=1, epochs=100, lr=0.001,
                  channels=10, depth=1,
                  reduced_size=10, out_channels=10, kernel_size=4,
-                 in_channels=1, cuda=False, gpu=0, seed=42):
+                 in_channels=1, cuda=False, gpu=0, seed=42, final_shapelet_num=3):
         super(CausalCNNEncoderClassifier, self).__init__(
             compared_length, batch_size,
             epochs, lr,
@@ -692,7 +694,8 @@ class CausalCNNEncoderClassifier(TimeSeriesEncoderClassifier):
                                   out_channels, kernel_size, cuda, gpu),
             self.__encoder_params(in_channels, channels, depth, reduced_size,
                                   out_channels, kernel_size),
-            in_channels, cuda, gpu, seed
+            in_channels, cuda, gpu, seed,
+            final_shapelet_num=final_shapelet_num
         )
         self.architecture = 'CausalCNN'
         self.channels = channels
@@ -800,14 +803,16 @@ class CausalCNNEncoderClassifier(TimeSeriesEncoderClassifier):
             'out_channels': self.out_channels,
             'cuda': self.cuda,
             'gpu': self.gpu,
-            'seed': self.seed
+            'seed': self.seed,
+            'final_shapelet_num': self.final_shapelet_num
         }
 
     def set_params(self, compared_length, batch_size, epochs, lr,
                    channels, depth, reduced_size, out_channels, kernel_size,
-                   in_channels, cuda, gpu, seed=42):
+                   in_channels, cuda, gpu, seed=42, final_shapelet_num=3):
         self.__init__(
             compared_length, batch_size, epochs, lr, channels, depth,
-            reduced_size, out_channels, kernel_size, in_channels, cuda, gpu, seed
+            reduced_size, out_channels, kernel_size, in_channels, cuda, gpu, seed,
+            final_shapelet_num=final_shapelet_num
         )
         return self
