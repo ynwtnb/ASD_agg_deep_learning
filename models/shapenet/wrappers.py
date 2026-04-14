@@ -234,7 +234,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
 
         return self.encoder
 
-    def fit(self, X, y, test, test_labels, prefix_file, cluster_num, save_memory=False, verbose=False, use_cache=False, max_discovery_samples=500, test_meta=None):
+    def fit(self, X, y, test, test_labels, prefix_file, cluster_num, save_memory=False, verbose=False, use_cache=False, max_discovery_samples=500, test_meta=None, val_X=None, val_y=None, val_meta=None):
         """
         Trains sequentially the encoder unsupervisedly and then the classifier
         using the given labels over the learned features.
@@ -321,34 +321,57 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         self.classifier = self.fit_svm_linear(features, y)
         print(f"[timing] SVM: {(timeit.default_timer()-t0)/60:.3f} min")
 
-        # ── Evaluation ────────────────────────────────────────────────────────
-        test_features = self.shapelet_transformation(test, shapelet, shapelet_dim, utility_sort_index, final_shapelet_num)
-        y_pred = self.classifier.predict(test_features)
-        decision_scores = self.classifier.decision_function(test_features)
+        # ── Shapelet info ─────────────────────────────────────────────────────
+        shapelet_info = []
+        for j in range(final_shapelet_num):
+            idx = utility_sort_index[j]
+            shapelet_info.append({
+                'utility_rank': j,
+                'channel': int(shapelet_dim[idx]),
+                'length': int(len(numpy.asarray(shapelet[idx]))),
+            })
 
-        accuracy = self.classifier.score(test_features, test_labels)
-        auroc = roc_auc_score(test_labels, decision_scores)
-        auprc = average_precision_score(test_labels, decision_scores)
+        shared_extra = {
+            'shapelet_info': shapelet_info,
+            'train_feature_mean': features.mean(axis=0).tolist(),
+            'train_feature_std': features.std(axis=0).tolist(),
+            'train_class_distribution': numpy.bincount(y.astype(int)).tolist(),
+        }
 
-        print(f"svm linear Accuracy: {accuracy:.4f} | AUROC: {auroc:.4f} | AUPRC: {auprc:.4f}")
+        # ── Test evaluation ───────────────────────────────────────────────────
+        test_features = self._get_features(
+            test, shapelet, shapelet_dim, utility_sort_index, final_shapelet_num,
+            cache_path=(prefix_file + '_test_features.npy') if prefix_file else None,
+            use_cache=use_cache,
+        )
+        test_extra = dict(shared_extra)
+        test_extra['test_class_distribution'] = numpy.bincount(test_labels.astype(int)).tolist()
+        results = self._evaluate(test_features, test_labels, meta=test_meta, extra=test_extra)
+        print(f"svm linear Accuracy: {results['accuracy']:.4f} | AUROC: {results['auroc']:.4f} | AUPRC: {results['auprc']:.4f}")
 
         if prefix_file is not None:
-            results = {
-                'accuracy': accuracy,
-                'auroc': auroc,
-                'auprc': auprc,
-                'y_true': test_labels.tolist(),
-                'y_pred': numpy.asarray(y_pred).tolist(),
-                'decision_scores': numpy.asarray(decision_scores).tolist(),
-            }
-            if test_meta is not None:
-                results['participant_ids'] = numpy.asarray(test_meta['participant_ids']).tolist()
-                results['session_ids'] = numpy.asarray(test_meta['session_ids']).tolist()
-                results['superposition_lists'] = numpy.asarray(test_meta['superposition_lists']).tolist()
             results_path = prefix_file + '_results.json'
             with open(results_path, 'w') as fp:
                 json.dump(results, fp)
             print(f"[saved] results → {results_path}")
+
+        # ── Val evaluation ────────────────────────────────────────────────────
+        if val_X is not None and val_y is not None and len(val_y) > 0:
+            val_features = self._get_features(
+                val_X, shapelet, shapelet_dim, utility_sort_index, final_shapelet_num,
+                cache_path=(prefix_file + '_val_features.npy') if prefix_file else None,
+                use_cache=use_cache,
+            )
+            val_extra = dict(shared_extra)
+            val_extra['val_class_distribution'] = numpy.bincount(val_y.astype(int)).tolist()
+            val_results = self._evaluate(val_features, val_y, meta=val_meta, extra=val_extra)
+            print(f"val Accuracy: {val_results['accuracy']:.4f} | AUROC: {val_results['auroc']:.4f} | AUPRC: {val_results['auprc']:.4f}")
+
+            if prefix_file is not None:
+                val_results_path = prefix_file + '_val_results.json'
+                with open(val_results_path, 'w') as fp:
+                    json.dump(val_results, fp)
+                print(f"[saved] val results → {val_results_path}")
 
         return self
 
@@ -621,6 +644,53 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                 dists = numpy.linalg.norm(windows - shapelet, axis=2)  # (chunk, T-L+1)
                 features[start:end, j] = dists.min(axis=1)
 
+        return features
+
+    def _evaluate(self, features, y_true, meta=None, extra=None):
+        """
+        Compute predictions and metrics on precomputed features.
+
+        Returns a dict with accuracy, auroc, auprc, predictions, and optionally
+        meta fields and any extra key/value pairs passed via `extra`.
+        """
+        y_pred = self.classifier.predict(features)
+        decision_scores = self.classifier.decision_function(features)
+        accuracy = self.classifier.score(features, y_true)
+        try:
+            auroc = roc_auc_score(y_true, decision_scores)
+            auprc = average_precision_score(y_true, decision_scores)
+        except ValueError as e:
+            print(f"[warning] metric computation failed: {e}")
+            auroc = float('nan')
+            auprc = float('nan')
+
+        results = {
+            'accuracy': accuracy,
+            'auroc': auroc,
+            'auprc': auprc,
+            'y_true': y_true.tolist(),
+            'y_pred': numpy.asarray(y_pred).tolist(),
+            'decision_scores': numpy.asarray(decision_scores).tolist(),
+        }
+        if meta is not None:
+            results['participant_ids'] = numpy.asarray(meta['participant_ids']).tolist()
+            results['session_ids'] = numpy.asarray(meta['session_ids']).tolist()
+            results['superposition_lists'] = numpy.asarray(meta['superposition_lists']).tolist()
+        if extra is not None:
+            results.update(extra)
+        return results
+
+    def _get_features(self, X, shapelet, shapelet_dim, utility_sort_index,
+                      final_shapelet_num, cache_path=None, use_cache=False):
+        """
+        Compute shapelet transformation features, with optional disk caching.
+        """
+        if use_cache and cache_path and os.path.exists(cache_path):
+            print(f"[cache] Loading features from {cache_path}")
+            return numpy.load(cache_path)
+        features = self.shapelet_transformation(X, shapelet, shapelet_dim, utility_sort_index, final_shapelet_num)
+        if cache_path:
+            numpy.save(cache_path, features)
         return features
 
     def predict(self, X, batch_size=50):

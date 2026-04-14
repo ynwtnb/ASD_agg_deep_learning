@@ -7,6 +7,8 @@ import torch
 import numpy as np
 import argparse
 import timeit
+from math import trunc
+from torch.utils.data import Subset
 
 # Allow imports from shared/ and shapenet/
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../shared'))
@@ -41,6 +43,8 @@ def make_run_config(args):
         'split': args.split,
         'n_splits': args.n_splits,
         'seed': args.seed,
+        'stride': args.stride,
+        'val_prop': args.val_prop,
         'hyper': hyper_params,
     }
 
@@ -129,10 +133,125 @@ def make_smoke_split(dataset, n_per_class):
             X_all[test_idx],  y_all[test_idx])
 
 
-def normalize(train, test):
+def make_val_split(train_subset, val_prop=0.2):
+    """
+    Chronological val split from a train Subset, respecting session boundaries.
+
+    For each (subject, session) group, holds out the last val_prop fraction as
+    val and removes the superposition overlap gap from the training tail to
+    prevent temporal leakage. Sessions with fewer than 4 instances go entirely
+    to inner training.
+
+    Parameters
+    ----------
+    train_subset : torch.utils.data.Subset
+    val_prop : float
+
+    Returns
+    -------
+    inner_train : torch.utils.data.Subset
+    inner_val : torch.utils.data.Subset
+    """
+    dataset = train_subset.dataset
+    train_idx = np.asarray(train_subset.indices).astype(int)
+
+    pids = dataset.get_participant_ids()[train_idx]
+    session_ids = dataset.get_session_ids()[train_idx]
+    sup = dataset.get_superposition_lists()[train_idx]  # (N, 2)
+
+    inner_train_idx = []
+    inner_val_idx = []
+
+    for pid in np.unique(pids):
+        pid_mask = pids == pid
+        pid_idx = train_idx[pid_mask]
+        pid_sessions = session_ids[pid_mask]
+        pid_sup = sup[pid_mask]
+
+        for sess in np.unique(pid_sessions):
+            sess_mask = pid_sessions == sess
+            sess_idx = pid_idx[sess_mask]
+            sess_sup = pid_sup[sess_mask]
+
+            n = len(sess_idx)
+            if n < 4:
+                inner_train_idx.extend(sess_idx.tolist())
+                continue
+
+            first_val = trunc(n * (1 - val_prop))
+            n_overlap = int(sess_sup[first_val][0])
+            last_train = first_val - n_overlap
+
+            if last_train <= 0:
+                inner_train_idx.extend(sess_idx.tolist())
+                continue
+
+            inner_train_idx.extend(sess_idx[:last_train].tolist())
+            inner_val_idx.extend(sess_idx[first_val:].tolist())
+
+    return Subset(dataset, inner_train_idx), Subset(dataset, inner_val_idx)
+
+
+def subsample_train_subset(subset, stride, seed=42):
+    """
+    Subsamples a training Subset by taking every stride-th instance per session.
+
+    Consecutive instances overlap by (n_obs_bins - 1) / n_obs_bins = 91.7%.
+    Training on all of them wastes optimizer capacity on near-duplicate
+    gradients and enables memorization. Subsampling with stride=6 reduces
+    overlap to ~50%, yielding more independent information per batch while
+    preserving the temporal distribution of positive and negative instances.
+
+    Normalization stats should be computed from the full (un-subsampled)
+    training split so they reflect the true data distribution.
+
+    Parameters
+    ----------
+    subset : torch.utils.data.Subset
+    stride : int
+        Take every stride-th instance within each session.
+    seed : int
+        Random seed for reproducibility of session ordering.
+
+    Returns
+    -------
+    subsampled : torch.utils.data.Subset
+    """
+    dataset = subset.dataset
+    train_idx = np.asarray(subset.indices).astype(int)
+
+    pids = dataset.get_participant_ids()[train_idx]
+    session_ids = dataset.get_session_ids()[train_idx]
+
+    keep_idx = []
+    for pid in np.unique(pids):
+        pid_mask = pids == pid
+        pid_idx = train_idx[pid_mask]
+        pid_sessions = session_ids[pid_mask]
+
+        for sess in np.unique(pid_sessions):
+            sess_mask = pid_sessions == sess
+            sess_idx = pid_idx[sess_mask]
+            # take every stride-th instance, preserving temporal order
+            keep_idx.extend(sess_idx[::stride].tolist())
+
+    n_orig = len(train_idx)
+    n_kept = len(keep_idx)
+    n_pos = int(dataset.labels[np.array(keep_idx)].sum())
+    print(f"  stride subsampling -- {n_orig} -> {n_kept} instances "
+          f"(stride={stride}), {n_pos} positive")
+    return Subset(dataset, keep_idx)
+
+
+def normalize(train, *others):
     """
     Z-score normalises each channel independently using train-set statistics.
-    Modifies arrays in-place and returns them.
+    Applies the same normalisation to any additional arrays (val, test, etc.).
+    Modifies arrays in-place and returns them as a tuple.
+
+    Usage:
+        train, test = normalize(train, test)
+        train, val, test = normalize(train, val, test)
     """
     nb_dims = train.shape[1]
     for j in range(nb_dims):
@@ -140,13 +259,14 @@ def normalize(train, test):
         var = np.var(train[:, j])
         std = math.sqrt(var) if var > 0 else 1.0
         train[:, j] = (train[:, j] - mean) / std
-        test[:, j] = (test[:, j] - mean) / std
-    return train, test
+        for arr in others:
+            arr[:, j] = (arr[:, j] - mean) / std
+    return (train,) + others
 
 
 def fit_parameters(file, train, train_labels, test, test_labels, cuda, gpu,
                    save_path, cluster_num, save_memory=False, override_epochs=None, seed=42, use_cache=False,
-                   max_discovery_samples=500, test_meta=None):
+                   max_discovery_samples=500, test_meta=None, val_X=None, val_y=None, val_meta=None):
     """
     Instantiates a CausalCNNEncoderClassifier from a JSON hyperparameter file,
     fits it on the training data, and returns the trained classifier.
@@ -166,6 +286,9 @@ def fit_parameters(file, train, train_labels, test, test_labels, cuda, gpu,
     cluster_num : int
         Number of clusters for shapelet discovery.
     save_memory : bool
+    val_X : np.ndarray or None, shape (N, C, T)
+    val_y : np.ndarray or None, shape (N,)
+    val_meta : dict or None
     """
     classifier = wrappers.CausalCNNEncoderClassifier()
 
@@ -186,7 +309,175 @@ def fit_parameters(file, train, train_labels, test, test_labels, cuda, gpu,
         save_memory=save_memory, verbose=True, use_cache=use_cache,
         max_discovery_samples=max_discovery_samples,
         test_meta=test_meta,
+        val_X=val_X, val_y=val_y, val_meta=val_meta,
     )
+
+
+def _prepare_fold_data(train_subset, test_subset, args):
+    """
+    Prepare numpy arrays for one fold:
+      1. Val split (chronological, respects superposition gap)
+      2. Optional stride subsampling on inner train
+      3. Z-score normalisation using full inner-train statistics
+
+    Subsampling is applied AFTER the val split so that:
+    - The superposition-aware gap between train and val is computed on the
+      full inner-train sequence (correct temporal structure).
+    - Normalisation stats are derived from the full inner-train distribution,
+      not the strided subset.
+
+    Parameters
+    ----------
+    train_subset : torch.utils.data.Subset
+    test_subset  : torch.utils.data.Subset
+    args         : namespace with val_prop, stride (optional, default 1),
+                   and any other pipeline args
+
+    Returns
+    -------
+    train, train_labels, val_X, val_y, val_meta, test, test_labels, test_meta
+    """
+    stride = getattr(args, 'stride', 1)
+
+    inner_train_subset, inner_val_subset = make_val_split(train_subset, val_prop=args.val_prop)
+
+    val_X, val_y, val_meta       = subset_to_numpy(inner_val_subset)
+    test, test_labels, test_meta = subset_to_numpy(test_subset)
+
+    if stride > 1:
+        subsampled = subsample_train_subset(inner_train_subset, stride=stride)
+        # Full inner-train for normalization stats; discarded afterward
+        full_train, _, _ = subset_to_numpy(inner_train_subset)
+        train, train_labels, _ = subset_to_numpy(subsampled)
+        normalize(full_train, train, val_X, test)
+    else:
+        train, train_labels, _ = subset_to_numpy(inner_train_subset)
+        normalize(train, val_X, test)
+
+    print(f"  train={len(train)}, val={len(val_X)}, test={len(test)}")
+    return train, train_labels, val_X, val_y, val_meta, test, test_labels, test_meta
+
+
+def run_split(args, dataset, params_file, base_save_path, cluster_num, run_config=None):
+    """
+    Run training (and optional val evaluation) for the split type specified in args.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Must have: split, n_splits, val_prop, cuda, gpu, seed,
+                   max_discovery_samples, load, run_from_scratch
+    dataset : ASDAggressionDataset
+    params_file : str
+        Path to JSON file with hyperparameters.
+    base_save_path : str
+        Root directory under which fold subdirectories are created.
+    cluster_num : int
+    run_config : dict or None
+        If given, used to validate / write cache config files.
+
+    Returns
+    -------
+    val_aurocs : list of float
+        Val AUROC for each fold (NaN if computation failed).
+    """
+    val_aurocs = []
+
+    if args.split == 'smoke_test':
+        raise ValueError("run_split does not support smoke_test; handle it separately.")
+
+    elif args.split == 'session':
+        train_subset, test_subset = session_splits(dataset)
+        train, train_labels, val_X, val_y, val_meta, test, test_labels, test_meta = \
+            _prepare_fold_data(train_subset, test_subset, args)
+
+        fold_dir = os.path.join(base_save_path, 'session_model')
+        os.makedirs(fold_dir, exist_ok=True)
+        prefix = os.path.join(fold_dir, 'session_model')
+
+        _run_one_fold(
+            params_file, train, train_labels, test, test_labels,
+            args, prefix, cluster_num, run_config,
+            test_meta=test_meta, val_X=val_X, val_y=val_y, val_meta=val_meta,
+        )
+        val_aurocs.append(_read_val_auroc(prefix))
+
+    elif args.split == 'loso':
+        for test_pid, train_subset, test_subset in loso_splits(dataset):
+            print(f"\n=== LOSO fold: test participant {test_pid} ===")
+            train, train_labels, val_X, val_y, val_meta, test, test_labels, test_meta = \
+                _prepare_fold_data(train_subset, test_subset, args)
+
+            fold_dir = os.path.join(base_save_path, f'pid_{test_pid}')
+            os.makedirs(fold_dir, exist_ok=True)
+            prefix = os.path.join(fold_dir, f'pid_{test_pid}')
+
+            _run_one_fold(
+                params_file, train, train_labels, test, test_labels,
+                args, prefix, cluster_num, run_config,
+                test_meta=test_meta, val_X=val_X, val_y=val_y, val_meta=val_meta,
+            )
+            val_aurocs.append(_read_val_auroc(prefix))
+
+    elif args.split == 'kfold':
+        for fold, train_subset, test_subset in kfold_participant_splits(dataset, n_splits=args.n_splits):
+            print(f"\n=== K-Fold: fold {fold} ===")
+            train, train_labels, val_X, val_y, val_meta, test, test_labels, test_meta = \
+                _prepare_fold_data(train_subset, test_subset, args)
+
+            fold_dir = os.path.join(base_save_path, f'fold_{fold}')
+            os.makedirs(fold_dir, exist_ok=True)
+            prefix = os.path.join(fold_dir, f'fold_{fold}')
+
+            _run_one_fold(
+                params_file, train, train_labels, test, test_labels,
+                args, prefix, cluster_num, run_config,
+                test_meta=test_meta, val_X=val_X, val_y=val_y, val_meta=val_meta,
+            )
+            val_aurocs.append(_read_val_auroc(prefix))
+
+    return val_aurocs
+
+
+def _run_one_fold(params_file, train, train_labels, test, test_labels,
+                  args, prefix, cluster_num, run_config,
+                  test_meta=None, val_X=None, val_y=None, val_meta=None):
+    """Train and evaluate one fold. Handles cache validation and model saving."""
+    if args.load:
+        classifier = wrappers.CausalCNNEncoderClassifier()
+        with open(prefix + '_parameters.json', 'r') as f:
+            hp_dict = json.load(f)
+        hp_dict['cuda'] = args.cuda
+        hp_dict['gpu'] = args.gpu
+        classifier.set_params(**hp_dict)
+        classifier.load(prefix)
+        return
+
+    use_cache = (not args.run_from_scratch) and config_matches(prefix, run_config) if run_config else False
+    if not use_cache and run_config is not None:
+        with open(prefix + '_run_config.json', 'w') as fp:
+            json.dump(run_config, fp)
+
+    classifier = fit_parameters(
+        params_file, train, train_labels, test, test_labels,
+        args.cuda, args.gpu, prefix, cluster_num,
+        seed=args.seed, use_cache=use_cache,
+        max_discovery_samples=args.max_discovery_samples,
+        test_meta=test_meta,
+        val_X=val_X, val_y=val_y, val_meta=val_meta,
+    )
+    classifier.save(prefix)
+    with open(prefix + '_parameters.json', 'w') as fp:
+        json.dump(classifier.get_params(), fp)
+
+
+def _read_val_auroc(prefix):
+    """Read val AUROC from saved val_results.json. Returns NaN if missing."""
+    path = prefix + '_val_results.json'
+    if not os.path.exists(path):
+        return float('nan')
+    with open(path) as f:
+        return float(json.load(f)['auroc'])
 
 
 def parse_arguments():
@@ -231,6 +522,15 @@ def parse_arguments():
     parser.add_argument('--max_discovery_samples', type=int, default=500,
                         help='max training samples for shapelet discovery (stratified subsample). '
                              'Lower if OOM during discovery. With T~2880 D=10, 500 needs ~29 GB. (default: 500)')
+    parser.add_argument('--stride', type=int, default=1,
+                        help='stride for subsampling training data within each session. '
+                             '1 = no subsampling. stride=6 reduces ~91%% overlap to ~50%% '
+                             '(default: 1)')
+    parser.add_argument('--run_id', type=str, default=None,
+                        help='unique ID for this run (e.g. config hash). If set, results are saved under '
+                             'save_path/run_<run_id>/. Allows parallel runs with different configs.')
+    parser.add_argument('--val_prop', type=float, default=0.2,
+                        help='proportion of each session held out for validation (default: 0.2)')
 
     print('parse arguments succeed !!!')
     return parser.parse_args()
@@ -259,7 +559,9 @@ if __name__ == '__main__':
     )
     print(f"[timing] dataset load: {(timeit.default_timer()-t0)/60:.3f} min | {len(dataset)} instances")
 
-    os.makedirs(args.save_path, exist_ok=True)
+    # run_id が指定された場合、save_path の下に run_{id}/ サブディレクトリを作成
+    base_save_path = os.path.join(args.save_path, f'run_{args.run_id}') if args.run_id else args.save_path
+    os.makedirs(base_save_path, exist_ok=True)
 
     # Compute once; used by all fold branches to validate intermediate caches.
     run_config = make_run_config(args)
@@ -276,7 +578,7 @@ if __name__ == '__main__':
         train, test = normalize(train, test)
         print(f"[timing] normalize: {(timeit.default_timer()-t0)/60:.3f} min")
 
-        prefix = os.path.join(args.save_path, 'smoke_test')
+        prefix = os.path.join(base_save_path, 'smoke_test')
 
         t0 = timeit.default_timer()
         classifier = fit_parameters(
@@ -288,116 +590,9 @@ if __name__ == '__main__':
         print(f"[timing] fit_parameters (encoder+discovery+transform+svm): {(timeit.default_timer()-t0)/60:.3f} min")
         print("Smoke test passed.")
 
-    # ── LOSO (leave-one-subject-out) ────────────────────────────────────────
-    elif args.split == 'loso':
-        for test_pid, train_subset, test_subset in loso_splits(dataset):
-            print(f"\n=== LOSO fold: test participant {test_pid} ===")
-            train, train_labels, _ = subset_to_numpy(train_subset)
-            test, test_labels, test_meta = subset_to_numpy(test_subset)
-            train, test = normalize(train, test)
-            print(f"  train={len(train)}, test={len(test)}")
-
-            fold_save_path = os.path.join(args.save_path, f'pid_{test_pid}')
-            os.makedirs(fold_save_path, exist_ok=True)
-            prefix = os.path.join(fold_save_path, f'pid_{test_pid}')
-
-            if not args.load:
-                use_cache = (not args.run_from_scratch) and config_matches(prefix, run_config)
-                if not use_cache:
-                    # Write-ahead: save config before training so partial results
-                    # can be resumed on the next run with the same args.
-                    with open(prefix + '_run_config.json', 'w') as fp:
-                        json.dump(run_config, fp)
-                classifier = fit_parameters(
-                    args.hyper, train, train_labels, test, test_labels,
-                    args.cuda, args.gpu, prefix, args.cluster_num,
-                    seed=args.seed, use_cache=use_cache,
-                    max_discovery_samples=args.max_discovery_samples,
-                    test_meta=test_meta,
-                )
-                classifier.save(prefix)
-                with open(prefix + '_parameters.json', 'w') as fp:
-                    json.dump(classifier.get_params(), fp)
-            else:
-                classifier = wrappers.CausalCNNEncoderClassifier()
-                with open(prefix + '_parameters.json', 'r') as f:
-                    hp_dict = json.load(f)
-                hp_dict['cuda'] = args.cuda
-                hp_dict['gpu'] = args.gpu
-                classifier.set_params(**hp_dict)
-                classifier.load(prefix)
-
-    # ── K-Fold participant splits ────────────────────────────────────────────
-    elif args.split == 'kfold':
-        for fold, train_subset, test_subset in kfold_participant_splits(dataset, n_splits=args.n_splits):
-            print(f"\n=== K-Fold: fold {fold} ===")
-            train, train_labels, _ = subset_to_numpy(train_subset)
-            test, test_labels, test_meta = subset_to_numpy(test_subset)
-            train, test = normalize(train, test)
-            print(f"  train={len(train)}, test={len(test)}")
-
-            fold_save_path = os.path.join(args.save_path, f'fold_{fold}')
-            os.makedirs(fold_save_path, exist_ok=True)
-            prefix = os.path.join(fold_save_path, f'fold_{fold}')
-
-            if not args.load:
-                use_cache = (not args.run_from_scratch) and config_matches(prefix, run_config)
-                if not use_cache:
-                    with open(prefix + '_run_config.json', 'w') as fp:
-                        json.dump(run_config, fp)
-                classifier = fit_parameters(
-                    args.hyper, train, train_labels, test, test_labels,
-                    args.cuda, args.gpu, prefix, args.cluster_num,
-                    seed=args.seed, use_cache=use_cache,
-                    max_discovery_samples=args.max_discovery_samples,
-                    test_meta=test_meta,
-                )
-                classifier.save(prefix)
-                with open(prefix + '_parameters.json', 'w') as fp:
-                    json.dump(classifier.get_params(), fp)
-            else:
-                classifier = wrappers.CausalCNNEncoderClassifier()
-                with open(prefix + '_parameters.json', 'r') as f:
-                    hp_dict = json.load(f)
-                hp_dict['cuda'] = args.cuda
-                hp_dict['gpu'] = args.gpu
-                classifier.set_params(**hp_dict)
-                classifier.load(prefix)
-
-    # ── Session-based split ─────────────────────────────────────────────────
-    elif args.split == 'session':
-        print("\n=== Session split ===")
-        train_subset, test_subset = session_splits(dataset)
-        train, train_labels, _ = subset_to_numpy(train_subset)
-        test, test_labels, test_meta = subset_to_numpy(test_subset)
-        train, test = normalize(train, test)
-        print(f"  train={len(train)}, test={len(test)}")
-
-        prefix = os.path.join(args.save_path, 'session_model')
-
-        if not args.load:
-            use_cache = (not args.run_from_scratch) and config_matches(prefix, run_config)
-            if not use_cache:
-                with open(prefix + '_run_config.json', 'w') as fp:
-                    json.dump(run_config, fp)
-            classifier = fit_parameters(
-                args.hyper, train, train_labels, test, test_labels,
-                args.cuda, args.gpu, prefix, args.cluster_num,
-                seed=args.seed, use_cache=use_cache,
-                max_discovery_samples=args.max_discovery_samples,
-                test_meta=test_meta,
-            )
-            classifier.save(prefix)
-            with open(prefix + '_parameters.json', 'w') as fp:
-                json.dump(classifier.get_params(), fp)
-        else:
-            classifier = wrappers.CausalCNNEncoderClassifier()
-            with open(prefix + '_parameters.json', 'r') as f:
-                hp_dict = json.load(f)
-            hp_dict['cuda'] = args.cuda
-            hp_dict['gpu'] = args.gpu
-            classifier.set_params(**hp_dict)
-            classifier.load(prefix)
+    else:
+        print(f"\n=== {args.split.upper()} split ===")
+        run_split(args, dataset, args.hyper, base_save_path, args.cluster_num, run_config)
 
     end = timeit.default_timer()
     print(f"\nAll time: {(end - start) / 60:.2f} minutes")
