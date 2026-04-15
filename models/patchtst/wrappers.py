@@ -44,6 +44,9 @@ class PatchTSTClassifier:
         use_focal=False,
         focal_alpha=0.25,
         focal_gamma=2.0,
+        patch_len=64,
+        patch_stride=32,
+        use_onecycle=False,
 
     ):
         self.epochs = epochs
@@ -63,6 +66,10 @@ class PatchTSTClassifier:
         self.use_focal = use_focal
         self.focal_alpha = focal_alpha
         self.focal_gamma = focal_gamma
+        
+        self.patch_len = patch_len
+        self.patch_stride = patch_stride
+        self.use_onecycle = use_onecycle
 
 
         self.model = None
@@ -98,6 +105,9 @@ class PatchTSTClassifier:
             'use_focal':    self.use_focal,
             'focal_alpha':  self.focal_alpha,
             'focal_gamma':  self.focal_gamma,
+            'patch_len':     self.patch_len,
+            'patch_stride':  self.patch_stride,
+            'use_onecycle':  self.use_onecycle,
 
         }
 
@@ -133,6 +143,7 @@ class PatchTSTClassifier:
             d_model=self.d_model, n_heads=self.n_heads,
             n_layers=self.n_layers, ffn_dim=self.ffn_dim,
             dropout=self.dropout, head_dropout=self.head_dropout,
+            patch_len=self.patch_len, patch_stride=self.patch_stride,
         )
         self.model = AggPatchTST(config=cfg).to(self.device)
 
@@ -150,7 +161,14 @@ class PatchTSTClassifier:
 
         optimizer = AdamW(self.model.parameters(),
                           lr=self.lr, weight_decay=self.weight_decay)
-        scheduler = CosineAnnealingLR(optimizer, T_max=self.epochs)
+        # scheduler = CosineAnnealingLR(optimizer, T_max=self.epochs)
+        if self.use_onecycle:
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                optimizer, max_lr=self.lr,
+                steps_per_epoch=len(train_loader), epochs=self.epochs
+            )
+        else:
+            scheduler = CosineAnnealingLR(optimizer, T_max=self.epochs)
 
         best_val_loss = float('inf')
 
@@ -167,11 +185,14 @@ class PatchTSTClassifier:
                 loss.backward()
                 optimizer.step()
                 train_loss += loss.item() * len(y_batch)
+                if self.use_onecycle:
+                    scheduler.step()
             train_loss /= len(train_loader.dataset)
 
             # validate
             val_loss, metrics = self._eval(val_loader, criterion)
-            scheduler.step()
+            if not self.use_onecycle:
+                scheduler.step()
 
             if verbose:
                 print(
@@ -240,6 +261,7 @@ class PatchTSTClassifier:
                 d_model=self.d_model, n_heads=self.n_heads,
                 n_layers=self.n_layers, ffn_dim=self.ffn_dim,
                 dropout=self.dropout, head_dropout=self.head_dropout,
+                patch_len=self.patch_len, patch_stride=self.patch_stride,
             )
             self.model = AggPatchTST(config=cfg).to(self.device)
 

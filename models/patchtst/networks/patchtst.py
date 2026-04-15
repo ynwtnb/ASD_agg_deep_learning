@@ -24,8 +24,8 @@ from transformers import PatchTSTConfig, PatchTSTForClassification
 
 N_CHANNELS   = 10
 SEQ_LEN      = 2880
-PATCH_LEN    = 64
-PATCH_STRIDE = 32
+PATCH_LEN    = 32
+PATCH_STRIDE = 16
 
 
 def build_patchtst_config(
