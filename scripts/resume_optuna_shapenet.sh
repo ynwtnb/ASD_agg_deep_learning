@@ -43,10 +43,16 @@ import time
 
 RECENT_MINUTES = 60  # treat as still-running if any file modified within this window
 
+# Files written by the resume script itself — exclude from modification check
+EXCLUDE = {'trial_params.json', 'trial_run_config.json'}
+
 def recently_modified(trial_dir, minutes=RECENT_MINUTES):
+    """True if any training file (not bookkeeping files) was modified recently."""
     cutoff = time.time() - minutes * 60
     try:
         for fname in os.listdir(trial_dir):
+            if fname in EXCLUDE:
+                continue
             fpath = os.path.join(trial_dir, fname)
             if os.path.isfile(fpath) and os.path.getmtime(fpath) > cutoff:
                 return True
