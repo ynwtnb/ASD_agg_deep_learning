@@ -1,0 +1,12 @@
+{
+    "epochs": 30,
+    "batch_size": 64,
+    "lr": 3e-4,
+    "weight_decay": 1e-4,
+    "pos_weight": 5.0,
+    "d_model": 128,
+    "n_layers": 3,
+    "ffn_dim": 256,
+    "dropout": 0.4,
+    "head_dropout": 0.4
+}
