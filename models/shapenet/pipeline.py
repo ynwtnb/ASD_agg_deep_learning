@@ -453,7 +453,10 @@ def _run_one_fold(params_file, train, train_labels, test, test_labels,
         classifier.load(prefix)
         return
 
-    use_cache = (not args.run_from_scratch) and config_matches(prefix, run_config) if run_config else False
+    if run_config is None:
+        use_cache = not args.run_from_scratch
+    else:
+        use_cache = (not args.run_from_scratch) and config_matches(prefix, run_config)
     if not use_cache and run_config is not None:
         with open(prefix + '_run_config.json', 'w') as fp:
             json.dump(run_config, fp)

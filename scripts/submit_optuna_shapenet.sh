@@ -14,7 +14,7 @@ LOG_DIR="../experiments/logs/shapenet_tuning"
 mkdir -p "$SAVE_PATH" "$LOG_DIR"
 STORAGE="sqlite:////$(realpath "$SAVE_PATH")/optuna.db"
 STUDY_NAME="shapenet_tuning"
-CLUSTER_NUM=20
+CLUSTER_NUM=50
 SPLIT="session"
 BIN_SIZE=15
 N_OBS_FRAMES=12
