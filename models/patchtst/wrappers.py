@@ -41,6 +41,10 @@ class PatchTSTClassifier:
         head_dropout=0.1,
         cuda=False,
         gpu=0,
+        use_focal=False,
+        focal_alpha=0.25,
+        focal_gamma=2.0,
+
     ):
         self.epochs = epochs
         self.batch_size = batch_size
@@ -55,6 +59,11 @@ class PatchTSTClassifier:
         self.head_dropout = head_dropout
         self.cuda = cuda
         self.gpu = gpu
+        
+        self.use_focal = use_focal
+        self.focal_alpha = focal_alpha
+        self.focal_gamma = focal_gamma
+
 
         self.model = None
         self.device = torch.device(
@@ -86,6 +95,10 @@ class PatchTSTClassifier:
             'head_dropout': self.head_dropout,
             'cuda':         self.cuda,
             'gpu':          self.gpu,
+            'use_focal':    self.use_focal,
+            'focal_alpha':  self.focal_alpha,
+            'focal_gamma':  self.focal_gamma,
+
         }
 
     # Data helpers
@@ -126,8 +139,15 @@ class PatchTSTClassifier:
         train_loader = self._to_loader(X, y, shuffle=True)
         val_loader = self._to_loader(test, test_labels)
 
-        pos_w = torch.tensor([self.pos_weight], device=self.device)
-        criterion = get_loss_fn(pos_weight=pos_w)
+        # pos_w = torch.tensor([self.pos_weight], device=self.device)
+        # criterion = get_loss_fn(pos_weight=pos_w)
+        if self.use_focal:
+            from losses.focal import get_focal_loss
+            criterion = get_focal_loss(alpha=self.focal_alpha, gamma=self.focal_gamma)
+        else:
+            pos_w = torch.tensor([self.pos_weight], device=self.device)
+            criterion = get_loss_fn(pos_weight=pos_w)
+
         optimizer = AdamW(self.model.parameters(),
                           lr=self.lr, weight_decay=self.weight_decay)
         scheduler = CosineAnnealingLR(optimizer, T_max=self.epochs)
