@@ -628,6 +628,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         transformed date label the same with original label
         '''
         N = numpy.shape(X)[0]
+        final_shapelet_num = min(final_shapelet_num, len(utility_sort_index))
         features = numpy.empty((N, final_shapelet_num))
 
         for j in range(final_shapelet_num):

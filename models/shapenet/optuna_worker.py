@@ -26,6 +26,7 @@ import types
 
 import numpy as np
 import optuna
+import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../shared'))
 sys.path.insert(0, os.path.dirname(__file__))
@@ -77,11 +78,14 @@ def objective(trial, args, dataset):
             load=False,
             run_from_scratch=True,  # no cache between trials
         )
-        val_aurocs = run_split(
-            fold_args, dataset, params_file,
-            trial_save_path, args.cluster_num,
-            run_config=None,
-        )
+        try:
+            val_aurocs = run_split(
+                fold_args, dataset, params_file,
+                trial_save_path, args.cluster_num,
+                run_config=None,
+            )
+        except torch.cuda.OutOfMemoryError:
+            raise optuna.exceptions.TrialPruned("CUDA out of memory")
     finally:
         os.unlink(params_file)
 
