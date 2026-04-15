@@ -29,7 +29,7 @@ echo "Looking for RUNNING trials in: $STORAGE"
 echo ""
 
 # Find RUNNING trial numbers, mark them as FAILED, print their directories.
-TRIAL_DIRS=$(python3 - <<PYEOF
+TRIAL_DIRS=$(/home/watanabe.y/.conda/envs/asd_agg_dl/bin/python3 - <<PYEOF
 import sys, os
 sys.path.insert(0, '../models/shapenet')
 import optuna

@@ -55,8 +55,26 @@ def sample_params(trial):
 # ── Objective ─────────────────────────────────────────────────────────────────
 
 def objective(trial, args, dataset):
-    params = sample_params(trial)
-    trial_save_path = os.path.join(args.save_path, f'trial_{trial.number}')
+    # ── Resume mode: reuse an existing (interrupted) trial directory ──────────
+    # The interrupted trial's params are read from its trial_params.json so we
+    # continue with identical hyperparameters.  Existing encoder / shapelet /
+    # feature caches in that directory will be picked up automatically because
+    # run_from_scratch=False → use_cache=True in _run_one_fold.
+    #
+    # Normal mode: create a fresh directory named after the new trial number.
+    if args.resume_trial_dir:
+        trial_save_path = args.resume_trial_dir
+        run_from_scratch = False
+        params_path = os.path.join(trial_save_path, 'trial_params.json')
+        with open(params_path) as f:
+            params = json.load(f)['params']
+        print(f"[resume] Resuming from {trial_save_path}")
+        print(f"[resume] Params: {params}")
+    else:
+        trial_save_path = os.path.join(args.save_path, f'trial_{trial.number}')
+        run_from_scratch = True
+        params = sample_params(trial)
+
     os.makedirs(trial_save_path, exist_ok=True)
 
     # Write params to a temp JSON so run_split can read it via fit_parameters
@@ -76,7 +94,7 @@ def objective(trial, args, dataset):
             seed=args.seed,
             max_discovery_samples=args.max_discovery_samples,
             load=False,
-            run_from_scratch=True,  # no cache between trials
+            run_from_scratch=run_from_scratch,
         )
         try:
             val_aurocs = run_split(
@@ -125,6 +143,9 @@ def parse_arguments():
     parser.add_argument('--num_observation_frames', type=int, default=12)
     parser.add_argument('--num_prediction_frames',  type=int, default=12)
     parser.add_argument('--max_discovery_samples',  type=int, default=500)
+    parser.add_argument('--resume_trial_dir', type=str, default=None,
+                        help='Path to an interrupted trial directory to resume from. '
+                             'Params are read from trial_params.json inside that directory.')
     return parser.parse_args()
 
 
