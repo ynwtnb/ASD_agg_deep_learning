@@ -62,8 +62,17 @@ for t in study.trials:
     trial_dir   = f"{save_path}/trial_{t.number}"
     params_file = f"{trial_dir}/trial_params.json"
     if not os.path.exists(params_file):
-        print(f"[skip] trial {t.number}: no trial_params.json", file=sys.stderr)
-        continue
+        # Params not saved yet (job interrupted early) — reconstruct from Optuna DB
+        if not t.params:
+            print(f"[skip] trial {t.number}: no params in DB either", file=sys.stderr)
+            continue
+        os.makedirs(trial_dir, exist_ok=True)
+        import json as _json
+        db_params = dict(t.params)
+        db_params.setdefault('compared_length', None)
+        with open(params_file, 'w') as f:
+            _json.dump({'trial_number': t.number, 'params': db_params}, f, indent=2)
+        print(f"[restored] trial {t.number}: trial_params.json written from DB", file=sys.stderr)
     if recently_modified(trial_dir):
         print(f"[skip] trial {t.number}: files modified within last {RECENT_MINUTES} min, likely still running", file=sys.stderr)
         continue

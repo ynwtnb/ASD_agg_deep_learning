@@ -77,6 +77,10 @@ def objective(trial, args, dataset):
 
     os.makedirs(trial_save_path, exist_ok=True)
 
+    # Save trial params before running so they exist even if the job is interrupted
+    with open(os.path.join(trial_save_path, 'trial_params.json'), 'w') as f:
+        json.dump({'trial_number': trial.number, 'params': params}, f, indent=2)
+
     # Write params to a temp JSON so run_split can read it via fit_parameters
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump(params, f)
@@ -106,10 +110,6 @@ def objective(trial, args, dataset):
             raise optuna.exceptions.TrialPruned("CUDA out of memory")
     finally:
         os.unlink(params_file)
-
-    # Save trial params alongside results for easy reference
-    with open(os.path.join(trial_save_path, 'trial_params.json'), 'w') as f:
-        json.dump({'trial_number': trial.number, 'params': params}, f, indent=2)
 
     valid = [v for v in val_aurocs if not np.isnan(v)]
     if not valid:
