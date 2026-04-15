@@ -171,6 +171,7 @@ class PatchTSTClassifier:
             scheduler = CosineAnnealingLR(optimizer, T_max=self.epochs)
 
         best_val_loss = float('inf')
+        best_metrics = {}
 
         for epoch in range(self.epochs):
             # train
@@ -198,15 +199,25 @@ class PatchTSTClassifier:
                 print(
                     f"Epoch {epoch+1:03d}/{self.epochs} | "
                     f"train={train_loss:.4f} | val={val_loss:.4f} | "
-                    f"AUROC={metrics['auroc']:.4f} | F1={metrics['f1']:.4f}"
+                    f"AUROC={metrics['auroc']:.4f} | F1={metrics['f1']:.4f} | AUPRC={metrics['auprc']:.4f}"
                 )
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
+                best_metrics = {
+                    'epoch': epoch + 1,
+                    'val_loss': val_loss,
+                    'auroc': metrics['auroc'],
+                    'f1': metrics['f1'],
+                    'auprc': metrics['auprc'],
+                }
                 utils.save_checkpoint(
                     prefix_file + '_best.pt', self.model, optimizer,
                     epoch + 1, best_val_loss
                 )
+
+        with open(prefix_file + '_val_results.json', 'w') as fp:
+            json.dump(best_metrics, fp, indent=2)
 
         return self
 

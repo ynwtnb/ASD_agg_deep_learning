@@ -135,6 +135,11 @@ if __name__ == '__main__':
                 classifier.save(prefix)
                 with open(prefix + '_parameters.json', 'w') as fp:
                     json.dump(classifier.get_params(), fp)
+                results_path = prefix + '_val_results.json'
+                if os.path.exists(results_path):
+                    with open(results_path) as f:
+                        r = json.load(f)
+                    print(f"  Best: epoch={r['epoch']} AUROC={r['auroc']:.4f} F1={r['f1']:.4f} AUPRC={r['auprc']:.4f}")
             else:
                 classifier = wrappers.PatchTSTClassifier()
                 with open(prefix + '_parameters.json', 'r') as f:
@@ -165,6 +170,11 @@ if __name__ == '__main__':
                 classifier.save(prefix)
                 with open(prefix + '_parameters.json', 'w') as fp:
                     json.dump(classifier.get_params(), fp)
+                results_path = prefix + '_val_results.json'
+                if os.path.exists(results_path):
+                    with open(results_path) as f:
+                        r = json.load(f)
+                    print(f"  Best: epoch={r['epoch']} AUROC={r['auroc']:.4f} F1={r['f1']:.4f} AUPRC={r['auprc']:.4f}")
             else:
                 classifier = wrappers.PatchTSTClassifier()
                 with open(prefix + '_parameters.json', 'r') as f:
@@ -192,6 +202,11 @@ if __name__ == '__main__':
             classifier.save(prefix)
             with open(prefix + '_parameters.json', 'w') as fp:
                 json.dump(classifier.get_params(), fp)
+            results_path = prefix + '_val_results.json'
+            if os.path.exists(results_path):
+                with open(results_path) as f:
+                    r = json.load(f)
+                print(f"  Best: epoch={r['epoch']} AUROC={r['auroc']:.4f} F1={r['f1']:.4f} AUPRC={r['auprc']:.4f}")
         else:
             classifier = wrappers.PatchTSTClassifier()
             with open(prefix + '_parameters.json', 'r') as f:
