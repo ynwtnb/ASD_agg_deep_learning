@@ -109,7 +109,7 @@ while IFS= read -r trial_dir; do
 #SBATCH --gres=gpu:1
 #SBATCH --time=8:00:00
 #SBATCH --partition=gpu
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH -o ${LOG_ABS}/output_resume_${TRIAL_NAME}_%j.txt
 #SBATCH -e ${LOG_ABS}/error_resume_${TRIAL_NAME}_%j.txt
 #SBATCH --mail-user=watanabe.y@northeastern.edu

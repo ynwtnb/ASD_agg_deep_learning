@@ -38,7 +38,7 @@ for i in $(seq 1 "$N_JOBS"); do
 #SBATCH --gres=gpu:1
 #SBATCH --time=8:00:00
 #SBATCH --partition=gpu
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH -o $(realpath "$LOG_DIR")/output_optuna_${i}_%j.txt
 #SBATCH -e $(realpath "$LOG_DIR")/error_optuna_${i}_%j.txt
 #SBATCH --mail-user=watanabe.y@northeastern.edu
