@@ -4,10 +4,10 @@
 # Pruning kills bad trials after 5 epochs (~30 min instead of ~1 hr).
 #
 # Usage:
-#   bash scripts/submit_optuna_patchtst.sh        # default 12 jobs
+#   bash scripts/submit_optuna_patchtst.sh        # default 8 jobs
 #   bash scripts/submit_optuna_patchtst.sh 20     # 20 jobs
 
-N_JOBS=${1:-12}
+N_JOBS=${1:-8}
 
 DATA_PATH="/scratch/borasaniya.t/CBS_DATA_ASD_ONLY"
 SAVE_PATH="experiments/results/patchtst/optuna"
