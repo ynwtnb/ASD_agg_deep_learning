@@ -63,23 +63,28 @@ def objective(trial, args, dataset):
     #
     # Normal mode: create a fresh directory named after the new trial number.
     if args.resume_trial_dir:
-        trial_save_path = args.resume_trial_dir
+        trial_save_path = os.path.abspath(args.resume_trial_dir)
+        resumed_from = os.path.basename(trial_save_path)
         run_from_scratch = False
         params_path = os.path.join(trial_save_path, 'trial_params.json')
         with open(params_path) as f:
             params = json.load(f)['params']
-        print(f"[resume] Resuming from {trial_save_path}")
+        print(f"[resume] Optuna trial {trial.number} resuming from {resumed_from}")
         print(f"[resume] Params: {params}")
     else:
         trial_save_path = os.path.join(args.save_path, f'trial_{trial.number}')
+        resumed_from = None
         run_from_scratch = True
         params = sample_params(trial)
 
     os.makedirs(trial_save_path, exist_ok=True)
 
     # Save trial params before running so they exist even if the job is interrupted
+    meta = {'trial_number': trial.number, 'params': params}
+    if resumed_from:
+        meta['resumed_from'] = resumed_from
     with open(os.path.join(trial_save_path, 'trial_params.json'), 'w') as f:
-        json.dump({'trial_number': trial.number, 'params': params}, f, indent=2)
+        json.dump(meta, f, indent=2)
 
     # Write params to a temp JSON so run_split can read it via fit_parameters
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
