@@ -231,7 +231,7 @@ def create_objective(dataset, device):
     train_subset, test_subset = session_splits(dataset)
 
     def objective(trial):
-        set_seed(SEED)
+        set_seed(SEED + trial.number)
 
         # ── architecture ────────────────────────────────────────────────
         arch_name = trial.suggest_categorical(
@@ -417,7 +417,9 @@ def parse_arguments():
 
 if __name__ == '__main__':
     args = parse_arguments()
-    set_seed(SEED)
+    slurm_job_id = int(os.environ.get("SLURM_JOB_ID", 0))
+    worker_seed = SEED + slurm_job_id
+    set_seed(worker_seed)
 
     if args.cuda and not torch.cuda.is_available():
         print("CUDA not available, proceeding on CPU")
@@ -439,14 +441,15 @@ if __name__ == '__main__':
     os.makedirs(os.path.dirname(args.study_path), exist_ok=True)
 
     # shared study: all workers read/write the same SQLite database
+    study_name = f"tcn_obs{args.num_observation_frames}_pred{args.num_prediction_frames}"
     study = optuna.create_study(
-        study_name="tcn_aggression",
-        storage=f"sqlite:///{args.study_path}",
-        sampler=TPESampler(seed=SEED, n_startup_trials=10),
-        pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=5),
-        direction="maximize",
-        load_if_exists=True,
-    )
+    study_name=study_name,
+    storage=f"sqlite:///{args.study_path}",
+    sampler=TPESampler(seed=SEED, n_startup_trials=10),
+    pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=5),
+    direction="maximize",
+    load_if_exists=True,
+)
 
     objective = create_objective(dataset, device)
 
