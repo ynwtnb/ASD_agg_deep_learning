@@ -56,3 +56,5 @@ done
 echo ""
 echo "all $N_JOBS jobs submitted."
 echo "monitor: squeue -u borasaniya.t"
+echo "check progress:"
+echo "  python -c \"import optuna; s=optuna.load_study(study_name='tcn_aggression', storage='sqlite:///$STUDY_DB'); print(f'Trials: {len(s.trials)}, Best: {s.best_value:.4f}')\""
