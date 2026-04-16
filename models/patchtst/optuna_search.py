@@ -114,6 +114,8 @@ def objective(trial, X_train, y_train, X_test, y_test, save_path, cuda, gpu,
     scheduler = CosineAnnealingLR(optimizer, T_max=total_epochs)
 
     best_auroc = 0.0
+    epochs_no_improve = 0
+    patience = 5
 
     for epoch in range(total_epochs):
         model.train()
@@ -140,6 +142,12 @@ def objective(trial, X_train, y_train, X_test, y_test, save_path, cuda, gpu,
         auroc = metrics['auroc']
         if auroc > best_auroc:
             best_auroc = auroc
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= patience:
+                print(f"  Trial {trial.number} early stopped at epoch {epoch+1} (no improvement for {patience} epochs)")
+                break
 
         scheduler.step()
 

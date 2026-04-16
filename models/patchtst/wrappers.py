@@ -47,6 +47,7 @@ class PatchTSTClassifier:
         patch_len=64,
         patch_stride=32,
         use_onecycle=False,
+        patience=5,
 
     ):
         self.epochs = epochs
@@ -62,14 +63,15 @@ class PatchTSTClassifier:
         self.head_dropout = head_dropout
         self.cuda = cuda
         self.gpu = gpu
-        
+
         self.use_focal = use_focal
         self.focal_alpha = focal_alpha
         self.focal_gamma = focal_gamma
-        
+
         self.patch_len = patch_len
         self.patch_stride = patch_stride
         self.use_onecycle = use_onecycle
+        self.patience = patience
 
 
         self.model = None
@@ -108,7 +110,7 @@ class PatchTSTClassifier:
             'patch_len':     self.patch_len,
             'patch_stride':  self.patch_stride,
             'use_onecycle':  self.use_onecycle,
-
+            'patience':      self.patience,
         }
 
     # Data helpers
@@ -172,6 +174,7 @@ class PatchTSTClassifier:
 
         best_val_loss = float('inf')
         best_metrics = {}
+        epochs_no_improve = 0
 
         for epoch in range(self.epochs):
             # train
@@ -204,6 +207,7 @@ class PatchTSTClassifier:
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
+                epochs_no_improve = 0
                 best_metrics = {
                     'epoch': epoch + 1,
                     'val_loss': val_loss,
@@ -215,6 +219,11 @@ class PatchTSTClassifier:
                     prefix_file + '_best.pt', self.model, optimizer,
                     epoch + 1, best_val_loss
                 )
+            else:
+                epochs_no_improve += 1
+                if self.patience > 0 and epochs_no_improve >= self.patience:
+                    print(f"  Early stopping at epoch {epoch+1} (no improvement for {self.patience} epochs)")
+                    break
 
         with open(prefix_file + '_val_results.json', 'w') as fp:
             json.dump(best_metrics, fp, indent=2)

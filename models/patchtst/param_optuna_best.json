@@ -13,5 +13,6 @@
     "patch_len": 32,
     "patch_stride": 32,
     "use_focal": false,
-    "use_onecycle": false
+    "use_onecycle": false,
+    "patience": 5
 }
