@@ -109,15 +109,17 @@ while IFS= read -r trial_dir; do
 #SBATCH --gres=gpu:1
 #SBATCH --time=8:00:00
 #SBATCH --partition=gpu
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH -o ${LOG_ABS}/output_resume_${TRIAL_NAME}_%j.txt
 #SBATCH -e ${LOG_ABS}/error_resume_${TRIAL_NAME}_%j.txt
 #SBATCH --mail-user=watanabe.y@northeastern.edu
 #SBATCH --mail-type=FAIL
 
 module load miniconda3/25.9.1
+eval "\$(conda shell.bash hook)"
 conda activate asd_agg_dl
 export PATH="/home/watanabe.y/.conda/envs/asd_agg_dl/bin:\$PATH"
+export CONDA_PREFIX="/home/watanabe.y/.conda/envs/asd_agg_dl"
 
 python -u ../models/shapenet/optuna_worker.py \\
     --data_path $DATA_PATH \\

@@ -1,12 +1,9 @@
 #!/bin/bash
-# Submit N independent Optuna worker jobs to SLURM.
-# Each job runs one trial and reports to a shared SQLite study.
+# Manually rerun specific Optuna trials by trial number.
 #
 # Usage:
-#   bash submit_optuna.sh <n_jobs>
-#   bash submit_optuna.sh 20
-
-N_JOBS=${1:-8}
+#   bash rerun_trials_shapenet.sh 1 5 12
+# (specify any number of trial numbers as arguments)
 
 DATA_PATH="/scratch/borasaniya.t/CBS_DATA_ASD_ONLY/"
 SAVE_PATH="../experiments/results/shapenet_tuning"
@@ -24,23 +21,35 @@ VAL_PROP=0.2
 STRIDE=6
 GPU=0
 
-echo "Submitting $N_JOBS Optuna worker jobs"
-echo "  Study:   $STUDY_NAME"
-echo "  Storage: $STORAGE"
-echo "  Split:   $SPLIT"
-echo ""
+if [ $# -eq 0 ]; then
+    echo "Usage: bash $(basename $0) <trial_num> [trial_num ...]"
+    echo "Example: bash $(basename $0) 1 5 12"
+    exit 1
+fi
 
-for i in $(seq 1 "$N_JOBS"); do
+N=0
+for TRIAL_NUM in "$@"; do
+    TRIAL_DIR="$(realpath "$SAVE_PATH")/trial_${TRIAL_NUM}"
+
+    if [ ! -f "${TRIAL_DIR}/trial_params.json" ]; then
+        echo "[skip] trial ${TRIAL_NUM}: ${TRIAL_DIR}/trial_params.json not found"
+        continue
+    fi
+
+    TRIAL_NAME="trial_${TRIAL_NUM}"
+    LOG_ABS=$(realpath "$LOG_DIR")
+    echo "  Submitting rerun job for: trial ${TRIAL_NUM} (dir: ${TRIAL_DIR})"
+
     sbatch <<EOF
 #!/bin/bash
-#SBATCH -J shapenet_optuna_${i}
+#SBATCH -J shapenet_rerun_${TRIAL_NAME}
 #SBATCH -N 1
 #SBATCH --gres=gpu:1
 #SBATCH --time=8:00:00
 #SBATCH --partition=gpu
 #SBATCH --mem=128G
-#SBATCH -o $(realpath "$LOG_DIR")/output_optuna_${i}_%j.txt
-#SBATCH -e $(realpath "$LOG_DIR")/error_optuna_${i}_%j.txt
+#SBATCH -o ${LOG_ABS}/output_rerun_${TRIAL_NAME}_%j.txt
+#SBATCH -e ${LOG_ABS}/error_rerun_${TRIAL_NAME}_%j.txt
 #SBATCH --mail-user=watanabe.y@northeastern.edu
 #SBATCH --mail-type=FAIL
 
@@ -64,12 +73,12 @@ python -u ../models/shapenet/optuna_worker.py \\
     --num_prediction_frames $N_PRED_FRAMES \\
     --max_discovery_samples $MAX_DISCOVERY_SAMPLES \\
     --stride $STRIDE \\
+    --resume_trial_dir ${TRIAL_DIR} \\
     --cuda --gpu $GPU
 EOF
-    echo "  Submitted job $i"
+
+    N=$((N + 1))
 done
 
 echo ""
-echo "All $N_JOBS jobs submitted."
-echo "Monitor progress:"
-echo "  optuna-dashboard $STORAGE"
+echo "Submitted $N rerun jobs."
