@@ -116,8 +116,10 @@ while IFS= read -r trial_dir; do
 #SBATCH --mail-type=FAIL
 
 module load miniconda3/25.9.1
+eval "\$(conda shell.bash hook)"
 conda activate asd_agg_dl
 export PATH="/home/watanabe.y/.conda/envs/asd_agg_dl/bin:\$PATH"
+export CONDA_PREFIX="/home/watanabe.y/.conda/envs/asd_agg_dl"
 
 python -u ../models/shapenet/optuna_worker.py \\
     --data_path $DATA_PATH \\
