@@ -17,7 +17,7 @@ HYPER_PATH="${HYPER_PATH:-../models/patchtst/default_parameters.json}"
 BIN_SIZE=15
 N_OBS_FRAMES=12
 N_PRED_FRAMES=12
-SPLIT="session"
+SPLIT="${SPLIT:-session}"
 N_SPLITS=3
 GPU=0
 

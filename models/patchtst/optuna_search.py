@@ -113,7 +113,9 @@ def objective(trial, X_train, y_train, X_test, y_test, save_path, cuda, gpu,
                       weight_decay=params['weight_decay'])
     scheduler = CosineAnnealingLR(optimizer, T_max=total_epochs)
 
+    best_score = 0.0
     best_auroc = 0.0
+    best_auprc = 0.0
     epochs_no_improve = 0
     patience = 5
 
@@ -140,8 +142,13 @@ def objective(trial, X_train, y_train, X_test, y_test, save_path, cuda, gpu,
             torch.cat(all_logits), torch.cat(all_labels)
         )
         auroc = metrics['auroc']
-        if auroc > best_auroc:
+        auprc = metrics['auprc']
+        score = 0.5 * auroc + 0.5 * auprc
+
+        if score > best_score:
+            best_score = score
             best_auroc = auroc
+            best_auprc = auprc
             epochs_no_improve = 0
         else:
             epochs_no_improve += 1
@@ -152,20 +159,20 @@ def objective(trial, X_train, y_train, X_test, y_test, save_path, cuda, gpu,
         scheduler.step()
 
         # Report to Optuna and check for pruning
-        trial.report(auroc, epoch)
+        trial.report(score, epoch)
         if epoch >= prune_epochs and trial.should_prune():
-            print(f"  Trial {trial.number} pruned at epoch {epoch+1} (AUROC={auroc:.4f})")
+            print(f"  Trial {trial.number} pruned at epoch {epoch+1} (AUROC={auroc:.4f} AUPRC={auprc:.4f})")
             raise optuna.exceptions.TrialPruned()
 
-        print(f"  Trial {trial.number} | Epoch {epoch+1:02d}/{total_epochs} | AUROC={auroc:.4f}")
+        print(f"  Trial {trial.number} | Epoch {epoch+1:02d}/{total_epochs} | AUROC={auroc:.4f} | AUPRC={auprc:.4f} | Score={score:.4f}")
 
     # Save best results
-    result = {'auroc': best_auroc, 'params': params}
+    result = {'score': best_score, 'auroc': best_auroc, 'auprc': best_auprc, 'params': params}
     with open(prefix + '_val_results.json', 'w') as f:
         json.dump(result, f, indent=2)
 
-    print(f"  Trial {trial.number} done — Best AUROC={best_auroc:.4f}")
-    return best_auroc
+    print(f"  Trial {trial.number} done — Best Score={best_score:.4f} (AUROC={best_auroc:.4f} AUPRC={best_auprc:.4f})")
+    return best_score
 
 
 def parse_arguments():
@@ -217,9 +224,9 @@ if __name__ == '__main__':
 
     completed = [t for t in study.trials if t.state == TrialState.COMPLETE]
     if completed:
-        print(f"\nBest AUROC: {study.best_value:.4f}")
+        print(f"\nBest Score (0.5*AUROC + 0.5*AUPRC): {study.best_value:.4f}")
         print(f"Best params: {json.dumps(study.best_params, indent=2)}")
         best_path = os.path.join(args.save_path, 'best_params.json')
         with open(best_path, 'w') as f:
-            json.dump({'auroc': study.best_value, 'params': study.best_params}, f, indent=2)
+            json.dump({'score': study.best_value, 'params': study.best_params}, f, indent=2)
         print(f"Best params saved to {best_path}")

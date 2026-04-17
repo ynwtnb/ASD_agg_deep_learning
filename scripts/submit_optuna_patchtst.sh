@@ -4,19 +4,21 @@
 # Pruning kills bad trials after 5 epochs (~30 min instead of ~1 hr).
 #
 # Usage:
-#   bash scripts/submit_optuna_patchtst.sh        # default 8 jobs
-#   bash scripts/submit_optuna_patchtst.sh 20     # 20 jobs
+#   bash scripts/submit_optuna_patchtst.sh                          # 8 jobs, default study
+#   bash scripts/submit_optuna_patchtst.sh 8 patchtst_combined      # 8 jobs, new study name
 
 N_JOBS=${1:-8}
+STUDY_NAME=${2:-patchtst_aggression}
 
 DATA_PATH="/scratch/borasaniya.t/CBS_DATA_ASD_ONLY"
-SAVE_PATH="experiments/results/patchtst/optuna"
-LOG_DIR="experiments/logs/patchtst_optuna"
+SAVE_PATH="experiments/results/patchtst/optuna_${STUDY_NAME}"
+LOG_DIR="experiments/logs/patchtst_optuna_${STUDY_NAME}"
 STUDY_DB="$(realpath "$SAVE_PATH")/study.db"
 
 mkdir -p "$SAVE_PATH" "$LOG_DIR"
 
 echo "Submitting $N_JOBS Optuna worker jobs for PatchTST"
+echo "  Study name: $STUDY_NAME"
 echo "  Study DB: $STUDY_DB"
 echo ""
 
@@ -45,6 +47,7 @@ export PYTHONPATH="\$(realpath shared):\$PYTHONPATH"
 python models/patchtst/optuna_search.py \
     --data_path $DATA_PATH \
     --study_path $STUDY_DB \
+    --study_name $STUDY_NAME \
     --save_path $SAVE_PATH \
     --n_trials 1 \
     --prune_epochs 5 \
@@ -59,4 +62,4 @@ echo ""
 echo "All $N_JOBS jobs submitted."
 echo "Monitor: squeue -u ma.yun2"
 echo "Check progress:"
-echo "  python -c \"import optuna; s=optuna.load_study(study_name='patchtst_aggression', storage='sqlite:///$STUDY_DB'); print(f'Trials: {len(s.trials)}, Best: {s.best_value:.4f}')\""
+echo "  python -c \"import optuna; s=optuna.load_study(study_name='$STUDY_NAME', storage='sqlite:///$STUDY_DB'); print(f'Trials: {len(s.trials)}, Best: {s.best_value:.4f}')\""
