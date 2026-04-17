@@ -14,6 +14,9 @@ import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader, TensorDataset
+import matplotlib
+matplotlib.use('Agg')  # non-interactive backend for cluster
+import matplotlib.pyplot as plt
 
 import utils
 from losses.bce import get_loss_fn
@@ -175,6 +178,7 @@ class PatchTSTClassifier:
         best_val_loss = float('inf')
         best_metrics = {}
         epochs_no_improve = 0
+        history = []
 
         for epoch in range(self.epochs):
             # train
@@ -197,6 +201,15 @@ class PatchTSTClassifier:
             val_loss, metrics = self._eval(val_loader, criterion)
             if not self.use_onecycle:
                 scheduler.step()
+
+            history.append({
+                'epoch': epoch + 1,
+                'train_loss': train_loss,
+                'val_loss': val_loss,
+                'auroc': metrics['auroc'],
+                'f1': metrics['f1'],
+                'auprc': metrics['auprc'],
+            })
 
             if verbose:
                 print(
@@ -228,7 +241,34 @@ class PatchTSTClassifier:
         with open(prefix_file + '_val_results.json', 'w') as fp:
             json.dump(best_metrics, fp, indent=2)
 
+        with open(prefix_file + '_history.json', 'w') as fp:
+            json.dump(history, fp, indent=2)
+
+        self._plot_history(history, prefix_file)
+
         return self
+
+    def _plot_history(self, history, prefix_file):
+        epochs = [h['epoch'] for h in history]
+        fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+
+        axes[0].plot(epochs, [h['train_loss'] for h in history], label='train')
+        axes[0].plot(epochs, [h['val_loss'] for h in history], label='val')
+        axes[0].set_title('Loss')
+        axes[0].set_xlabel('Epoch')
+        axes[0].legend()
+
+        axes[1].plot(epochs, [h['auroc'] for h in history], color='tab:blue')
+        axes[1].set_title('AUROC')
+        axes[1].set_xlabel('Epoch')
+
+        axes[2].plot(epochs, [h['auprc'] for h in history], color='tab:orange')
+        axes[2].set_title('AUPRC')
+        axes[2].set_xlabel('Epoch')
+
+        fig.tight_layout()
+        fig.savefig(prefix_file + '_curves.png', dpi=150)
+        plt.close(fig)
 
     # Evaluation
 
