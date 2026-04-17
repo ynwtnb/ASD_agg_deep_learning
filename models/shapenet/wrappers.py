@@ -5,7 +5,7 @@ import random
 import joblib
 import sklearn
 import sklearn.linear_model
-from sklearn.cluster import KMeans
+from cuml.cluster import KMeans
 from collections import Counter
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier

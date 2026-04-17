@@ -1,5 +1,5 @@
 import numpy
-from sklearn.cluster import KMeans
+from cuml.cluster import KMeans
 
 def slide_MTS_dim(X, alpha):
     '''
