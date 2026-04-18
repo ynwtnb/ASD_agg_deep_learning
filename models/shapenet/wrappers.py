@@ -553,6 +553,8 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         kmeans = KMeans(n_clusters=num_cluster, random_state=self.seed)
         kmeans.fit(representation_all)
         print(f"  [discovery] KMeans: {(timeit.default_timer()-t0)/60:.3f} min")
+        kmeans_labels = numpy.asarray(kmeans.labels_)
+        kmeans_centers = numpy.asarray(kmeans.cluster_centers_)
 
         # init candidate as list
         candidate = []
@@ -569,14 +571,14 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         # select the nearest to the centroid
         for i in range(num_cluster):
             # Use global indices directly — avoids O(N²) numpy.where per sample
-            cluster_global_indices = numpy.where(kmeans.labels_ == i)[0]
+            cluster_global_indices = numpy.where(kmeans_labels == i)[0]
             cluster_size_i = len(cluster_global_indices)
             dim_in_cluster_i = [representation_dim[j] for j in cluster_global_indices]
             class_label_cluster_i = [representation_class_label[j] for j in cluster_global_indices]
 
             # Vectorized distance to centroid — finds nearest in one shot
             dists = numpy.linalg.norm(
-                representation_all[cluster_global_indices] - kmeans.cluster_centers_[i], axis=1
+                representation_all[cluster_global_indices] - kmeans_centers[i], axis=1
             )
             nearest_local = int(numpy.argmin(dists))
             nearest_global_idx = int(cluster_global_indices[nearest_local])
@@ -631,19 +633,21 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         final_shapelet_num = min(final_shapelet_num, len(utility_sort_index))
         features = numpy.empty((N, final_shapelet_num))
 
+        device = torch.device(f'cuda:{self.gpu}' if self.cuda else 'cpu')
+        X_tensor = torch.from_numpy(X).float().to(device)  # (N, D, T)
+
         for j in range(final_shapelet_num):
-            shapelet = numpy.asarray(candidate[utility_sort_index[j]])
+            shapelet = torch.from_numpy(numpy.asarray(candidate[utility_sort_index[j]])).float().to(device)
             dim = int(candidate_dim[utility_sort_index[j]])
-            L = len(shapelet)
-            # Process in chunks to avoid materialising (N, T-L+1, L) all at once.
-            # chunk_size=200 keeps each subtraction array under ~4 GB.
-            for start in range(0, N, 200):
-                end = min(start + 200, N)
-                windows = numpy.lib.stride_tricks.sliding_window_view(
-                    X[start:end, dim, :], L, axis=1
-                )
-                dists = numpy.linalg.norm(windows - shapelet, axis=2)  # (chunk, T-L+1)
-                features[start:end, j] = dists.min(axis=1)
+            L = shapelet.shape[0]
+            x_dim = X_tensor[:, dim, :]  # (N, T)
+            col = torch.empty(N, device=device)
+            # Batch over instances to bound VRAM: each step holds (1000, T-L+1, L).
+            for start in range(0, N, 1000):
+                end = min(start + 1000, N)
+                windows = x_dim[start:end].unfold(1, L, 1)      # (B, T-L+1, L)
+                col[start:end] = (windows - shapelet).norm(dim=2).min(dim=1).values
+            features[:, j] = col.cpu().numpy()
 
         return features
 
