@@ -176,6 +176,7 @@ class PatchTSTClassifier:
             scheduler = CosineAnnealingLR(optimizer, T_max=self.epochs)
 
         best_val_loss = float('inf')
+        best_score = -1.0  # 0.5 * auroc + 0.5 * auprc
         best_metrics = {}
         epochs_no_improve = 0
         history = []
@@ -202,6 +203,8 @@ class PatchTSTClassifier:
             if not self.use_onecycle:
                 scheduler.step()
 
+            score = 0.5 * metrics['auroc'] + 0.5 * metrics['auprc']
+
             history.append({
                 'epoch': epoch + 1,
                 'train_loss': train_loss,
@@ -209,16 +212,18 @@ class PatchTSTClassifier:
                 'auroc': metrics['auroc'],
                 'f1': metrics['f1'],
                 'auprc': metrics['auprc'],
+                'score': score,
             })
 
             if verbose:
                 print(
                     f"Epoch {epoch+1:03d}/{self.epochs} | "
                     f"train={train_loss:.4f} | val={val_loss:.4f} | "
-                    f"AUROC={metrics['auroc']:.4f} | F1={metrics['f1']:.4f} | AUPRC={metrics['auprc']:.4f}"
+                    f"AUROC={metrics['auroc']:.4f} | F1={metrics['f1']:.4f} | AUPRC={metrics['auprc']:.4f} | Score={score:.4f}"
                 )
 
-            if val_loss < best_val_loss:
+            if score > best_score:
+                best_score = score
                 best_val_loss = val_loss
                 epochs_no_improve = 0
                 best_metrics = {
@@ -227,6 +232,7 @@ class PatchTSTClassifier:
                     'auroc': metrics['auroc'],
                     'f1': metrics['f1'],
                     'auprc': metrics['auprc'],
+                    'score': score,
                 }
                 utils.save_checkpoint(
                     prefix_file + '_best.pt', self.model, optimizer,
