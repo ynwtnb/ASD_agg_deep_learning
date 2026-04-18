@@ -553,6 +553,8 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         kmeans = KMeans(n_clusters=num_cluster, random_state=self.seed)
         kmeans.fit(representation_all)
         print(f"  [discovery] KMeans: {(timeit.default_timer()-t0)/60:.3f} min")
+        kmeans_labels = numpy.asarray(kmeans.labels_)
+        kmeans_centers = numpy.asarray(kmeans.cluster_centers_)
 
         # init candidate as list
         candidate = []
@@ -569,14 +571,14 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         # select the nearest to the centroid
         for i in range(num_cluster):
             # Use global indices directly — avoids O(N²) numpy.where per sample
-            cluster_global_indices = numpy.where(kmeans.labels_ == i)[0]
+            cluster_global_indices = numpy.where(kmeans_labels == i)[0]
             cluster_size_i = len(cluster_global_indices)
             dim_in_cluster_i = [representation_dim[j] for j in cluster_global_indices]
             class_label_cluster_i = [representation_class_label[j] for j in cluster_global_indices]
 
             # Vectorized distance to centroid — finds nearest in one shot
             dists = numpy.linalg.norm(
-                representation_all[cluster_global_indices] - kmeans.cluster_centers_[i], axis=1
+                representation_all[cluster_global_indices] - kmeans_centers[i], axis=1
             )
             nearest_local = int(numpy.argmin(dists))
             nearest_global_idx = int(cluster_global_indices[nearest_local])
