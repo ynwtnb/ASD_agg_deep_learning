@@ -8,7 +8,7 @@ from copy import deepcopy
 
 import numpy as np
 import torch
-from sklearn.metrics import average_precision_score
+from sklearn.metrics import average_precision_score, roc_auc_score
 
 
 def train_one_epoch(model, loader, optimizer, criterion, device, max_grad_norm=1.0):
@@ -68,7 +68,7 @@ def _validate(model, loader, criterion, device):
     """
     Single forward pass over a validation DataLoader.
 
-    Returns val loss, accuracy at 0.5, and AUPRC in one pass to avoid
+    Returns val loss, accuracy at 0.5, AUPRC, and AUROC in one pass to avoid
     iterating the loader multiple times per epoch.
 
     Parameters
@@ -83,6 +83,7 @@ def _validate(model, loader, criterion, device):
     avg_loss : float
     accuracy : float
     auprc : float
+    auroc : float
     """
     model.eval()
     total_loss = 0.0
@@ -110,11 +111,16 @@ def _validate(model, loader, criterion, device):
     except ValueError:
         auprc = float('nan')
 
-    return total_loss / n_total, n_correct / n_total, auprc
+    try:
+        auroc = float(roc_auc_score(all_labels, all_probs))
+    except ValueError:
+        auroc = float('nan')
+
+    return total_loss / n_total, n_correct / n_total, auprc, auroc
 
 
 def _save_checkpoint(path, model, optimizer, scheduler, epoch,
-                     best_val_auprc, best_state, epochs_no_improve, history):
+                     best_val_auroc, best_state, epochs_no_improve, history):
     """
     Saves full training state to disk for resumption after job interruption.
 
@@ -127,7 +133,7 @@ def _save_checkpoint(path, model, optimizer, scheduler, epoch,
     scheduler : torch.optim.lr_scheduler.ReduceLROnPlateau or None
     epoch : int
         Zero-indexed epoch that just completed.
-    best_val_auprc : float
+    best_val_auroc : float
     best_state : dict or None
     epochs_no_improve : int
     history : dict
@@ -137,7 +143,7 @@ def _save_checkpoint(path, model, optimizer, scheduler, epoch,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'scheduler_state_dict': scheduler.state_dict() if scheduler is not None else None,
-        'best_val_auprc': best_val_auprc,
+        'best_val_auroc': best_val_auroc,
         'best_state': best_state,
         'epochs_no_improve': epochs_no_improve,
         'history': history,
@@ -160,7 +166,7 @@ def _load_checkpoint(path, model, optimizer, scheduler, device):
     -------
     epoch : int
         The epoch to resume from (next epoch index).
-    best_val_auprc : float
+    best_val_auroc : float
     best_state : dict or None
     epochs_no_improve : int
     history : dict
@@ -174,7 +180,7 @@ def _load_checkpoint(path, model, optimizer, scheduler, device):
     print(f"  resumed from checkpoint at epoch {ckpt['epoch'] + 1}")
     return (
         start_epoch,
-        ckpt['best_val_auprc'],
+        ckpt['best_val_auroc'],
         ckpt['best_state'],
         ckpt['epochs_no_improve'],
         ckpt['history'],
@@ -185,12 +191,12 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
           device, epochs, patience, save_path, max_grad_norm=1.0,
           warmup_epochs=5):
     """
-    Full training loop with linear LR warmup, early stopping on val AUPRC,
+    Full training loop with linear LR warmup, early stopping on val AUROC,
     and per-epoch checkpointing for job resumption.
 
     For the first warmup_epochs epochs the learning rate ramps linearly from
     base_lr / 10 to base_lr. After warmup, ReduceLROnPlateau steps on negated
-    val AUPRC each epoch.
+    val AUROC each epoch.
 
     A full checkpoint (model, optimizer, scheduler, epoch, history) is saved
     after every epoch to save_path + '_checkpoint.pth'. If this file exists
@@ -217,25 +223,24 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
     model : torch.nn.Module
         Loaded with best observed weights.
     history : dict
-        Keys: train_loss, train_acc, val_loss, val_acc, val_auprc, lr.
+        Keys: train_loss, train_acc, val_loss, val_acc, val_auprc, val_auroc, lr.
     """
     base_lr = optimizer.param_groups[0]['lr']
-    best_val_auprc = -1.0
+    best_val_auroc = -1.0
     best_state = None
     epochs_no_improve = 0
     start_epoch = 0
     history = {
         'train_loss': [], 'train_acc': [],
-        'val_loss': [], 'val_acc': [], 'val_auprc': [],
+        'val_loss': [], 'val_acc': [], 'val_auprc': [], 'val_auroc': [],
         'lr': [],
     }
 
     # resume from checkpoint if it exists
     checkpoint_path = save_path + '_checkpoint.pth' if save_path else None
     if checkpoint_path and os.path.isfile(checkpoint_path):
-        start_epoch, best_val_auprc, best_state, epochs_no_improve, history = \
+        start_epoch, best_val_auroc, best_state, epochs_no_improve, history = \
             _load_checkpoint(checkpoint_path, model, optimizer, scheduler, device)
-        # restore base_lr from history if available
         if history['lr']:
             base_lr = max(history['lr'])
 
@@ -258,35 +263,39 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
             epochs_no_improve += 1
             if checkpoint_path:
                 _save_checkpoint(checkpoint_path, model, optimizer, scheduler,
-                                 epoch, best_val_auprc, best_state,
+                                 epoch, best_val_auroc, best_state,
                                  epochs_no_improve, history)
             if epochs_no_improve >= patience:
                 print(f"  early stopping at epoch {epoch + 1}")
                 break
             continue
 
-        val_loss, val_acc, val_auprc = _validate(model, val_loader, criterion, device)
+        val_loss, val_acc, val_auprc, val_auroc = _validate(
+            model, val_loader, criterion, device
+        )
 
         # only step the plateau scheduler after warmup completes
         if scheduler is not None and epoch >= warmup_epochs:
-            scheduler.step(-val_auprc)
+            scheduler.step(-val_auroc)
 
         history['train_loss'].append(train_loss)
         history['train_acc'].append(train_acc)
         history['val_loss'].append(val_loss)
         history['val_acc'].append(val_acc)
         history['val_auprc'].append(val_auprc)
+        history['val_auroc'].append(val_auroc)
         history['lr'].append(current_lr)
 
         print(
             f"  epoch {epoch + 1:03d}/{epochs} | "
             f"lr {current_lr:.2e} | "
             f"train loss {train_loss:.4f} acc {train_acc:.4f} | "
-            f"val loss {val_loss:.4f} acc {val_acc:.4f} auprc {val_auprc:.4f}"
+            f"val loss {val_loss:.4f} acc {val_acc:.4f} "
+            f"auprc {val_auprc:.4f} auroc {val_auroc:.4f}"
         )
 
-        if val_auprc > best_val_auprc:
-            best_val_auprc = val_auprc
+        if val_auroc > best_val_auroc:
+            best_val_auroc = val_auroc
             best_state = deepcopy(model.state_dict())
             epochs_no_improve = 0
             if save_path is not None:
@@ -297,7 +306,7 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler,
         # save full checkpoint after every epoch for job resumption
         if checkpoint_path:
             _save_checkpoint(checkpoint_path, model, optimizer, scheduler,
-                             epoch, best_val_auprc, best_state,
+                             epoch, best_val_auroc, best_state,
                              epochs_no_improve, history)
 
         if epochs_no_improve >= patience:

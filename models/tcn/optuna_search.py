@@ -5,7 +5,7 @@ Uses a shared SQLite study so multiple SLURM workers can run in parallel.
 Each worker runs 1 trial for crash isolation. TPE sampler coordinates across
 workers via the shared database.
 
-Pruning: MedianPruner kills trials whose val AUPRC at any epoch falls below
+Pruning: MedianPruner kills trials whose val AUROC at any epoch falls below
 the median of completed trials at that epoch. This cuts bad configurations
 early and saves 50-70% of GPU time.
 
@@ -26,7 +26,6 @@ Usage:
 
 import argparse
 import json
-import math
 import os
 import sys
 import warnings
@@ -42,7 +41,6 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from copy import deepcopy
-from sklearn.metrics import average_precision_score
 
 TCN_DIR = os.path.dirname(os.path.abspath(__file__))
 SHARED_DIR = os.path.join(TCN_DIR, '..', '..', 'shared')
@@ -112,7 +110,7 @@ class LabelSmoothingBCE(nn.Module):
 
 class OptunaPruneCallback:
     """
-    Reports val AUPRC to Optuna after each epoch for median pruning.
+    Reports val AUROC to Optuna after each epoch for median pruning.
 
     Parameters
     ----------
@@ -123,8 +121,8 @@ class OptunaPruneCallback:
         self.trial = trial
         self.epoch = 0
 
-    def __call__(self, val_auprc):
-        self.trial.report(val_auprc, self.epoch)
+    def __call__(self, val_auroc):
+        self.trial.report(val_auroc, self.epoch)
         self.epoch += 1
         if self.trial.should_prune():
             raise optuna.TrialPruned()
@@ -157,11 +155,11 @@ def train_with_pruning(model, train_loader, val_loader, criterion, optimizer,
 
     Returns
     -------
-    best_val_auprc : float
+    best_val_auroc : float
     model : torch.nn.Module with best weights loaded
     """
     base_lr = optimizer.param_groups[0]['lr']
-    best_val_auprc = -1.0
+    best_val_auroc = -1.0
     best_state = None
     epochs_no_improve = 0
 
@@ -182,22 +180,22 @@ def train_with_pruning(model, train_loader, val_loader, criterion, optimizer,
                 break
             continue
 
-        val_loss, val_acc, val_auprc = _validate(
+        val_loss, val_acc, val_auprc, val_auroc = _validate(
             model, val_loader, criterion, device
         )
 
         # scheduler step depends on type
         if scheduler is not None and epoch >= warmup_epochs:
             if scheduler_type == 'plateau':
-                scheduler.step(-val_auprc)
+                scheduler.step(-val_auroc)
             elif scheduler_type == 'cosine':
                 scheduler.step()
 
-        # report to optuna for pruning
-        prune_callback(val_auprc)
+        # report val AUROC to Optuna for pruning
+        prune_callback(val_auroc)
 
-        if val_auprc > best_val_auprc:
-            best_val_auprc = val_auprc
+        if val_auroc > best_val_auroc:
+            best_val_auroc = val_auroc
             best_state = deepcopy(model.state_dict())
             epochs_no_improve = 0
         else:
@@ -209,7 +207,7 @@ def train_with_pruning(model, train_loader, val_loader, criterion, optimizer,
     if best_state is not None:
         model.load_state_dict(best_state)
 
-    return best_val_auprc, model
+    return best_val_auroc, model
 
 
 # ============= Objective =============
@@ -249,8 +247,6 @@ def create_objective(dataset, device):
         weight_decay = trial.suggest_float("weight_decay", 1e-5, 1e-2, log=True)
         warmup_epochs = trial.suggest_int("warmup_epochs", 3, 15)
         batch_size = trial.suggest_categorical("batch_size", [16, 32, 64])
-
-        # lr schedule
         lr_schedule = trial.suggest_categorical("lr_schedule", ["plateau", "cosine"])
 
         # ── regularization ──────────────────────────────────────────────
@@ -266,7 +262,7 @@ def create_objective(dataset, device):
         patience = 15
         max_grad_norm = 1.0
 
-        # ── data preparation ───────────────────────────────────────────
+        # ── data preparation ────────────────────────────────────────────
         inner_train, inner_val = make_val_split(train_subset, val_prop=0.2)
         mean, std = compute_norm_stats(inner_train)
 
@@ -291,7 +287,7 @@ def create_objective(dataset, device):
             shuffle=False, num_workers=0, pin_memory=pin,
         )
 
-        # ── model ──────────────────────────────────────────────────────
+        # ── model ───────────────────────────────────────────────────────
         model = AggressionTCN(
             n_input_channels=10,
             channel_list=channel_list,
@@ -304,7 +300,7 @@ def create_objective(dataset, device):
         trial.set_user_attr("n_params", n_params)
         trial.set_user_attr("receptive_field", model.receptive_field)
 
-        # ── loss ───────────────────────────────────────────────────────
+        # ── loss ────────────────────────────────────────────────────────
         if max_pos_weight > 0:
             pw = compute_pos_weight(inner_train, max_pos_weight=max_pos_weight).to(device)
         else:
@@ -315,7 +311,7 @@ def create_objective(dataset, device):
         else:
             criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
 
-        # ── optimizer ──────────────────────────────────────────────────
+        # ── optimizer ───────────────────────────────────────────────────
         if optimizer_name == 'adam':
             optim = torch.optim.Adam(
                 model.parameters(), lr=lr, weight_decay=weight_decay,
@@ -330,7 +326,7 @@ def create_objective(dataset, device):
                 momentum=0.9,
             )
 
-        # ── lr schedule ────────────────────────────────────────────────
+        # ── lr schedule ─────────────────────────────────────────────────
         if lr_schedule == 'plateau':
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optim, mode='min', patience=5, factor=0.5,
@@ -340,10 +336,10 @@ def create_objective(dataset, device):
                 optim, T_max=epochs - warmup_epochs,
             )
 
-        # ── train with pruning ─────────────────────────────────────────
+        # ── train with pruning ──────────────────────────────────────────
         prune_cb = OptunaPruneCallback(trial)
         try:
-            best_val_auprc, model = train_with_pruning(
+            best_val_auroc, model = train_with_pruning(
                 model, train_loader, val_loader, criterion, optim,
                 scheduler, lr_schedule, device, epochs, patience,
                 max_grad_norm, warmup_epochs, prune_cb,
@@ -351,7 +347,7 @@ def create_objective(dataset, device):
         except optuna.TrialPruned:
             raise
 
-        # ── test evaluation ────────────────────────────────────────────
+        # ── test evaluation ─────────────────────────────────────────────
         model.eval()
         val_probs, val_labels = [], []
         with torch.no_grad():
@@ -385,12 +381,12 @@ def create_objective(dataset, device):
             f"pw={max_pos_weight:.1f} ls={label_smoothing:.2f} "
             f"stride={train_stride} bs={batch_size} "
             f"params={n_params:,} | "
-            f"val={best_val_auprc:.4f} | "
+            f"val_auroc={best_val_auroc:.4f} | "
             f"test_auprc={test_metrics['auprc']:.4f} "
             f"test_auroc={test_metrics['auc_roc']:.4f}"
         )
 
-        return best_val_auprc
+        return best_val_auroc
 
     return objective
 
@@ -398,6 +394,7 @@ def create_objective(dataset, device):
 # ============= CLI =============
 
 def parse_arguments():
+    """Parses command-line arguments for the Optuna TCN search."""
     parser = argparse.ArgumentParser(
         description='Optuna search for TCN aggression model'
     )
@@ -440,16 +437,15 @@ if __name__ == '__main__':
     os.makedirs(args.save_path, exist_ok=True)
     os.makedirs(os.path.dirname(args.study_path), exist_ok=True)
 
-    # shared study: all workers read/write the same SQLite database
     study_name = f"tcn_obs{args.num_observation_frames}_pred{args.num_prediction_frames}"
     study = optuna.create_study(
-    study_name=study_name,
-    storage=f"sqlite:///{args.study_path}",
-    sampler=TPESampler(seed=SEED, n_startup_trials=10),
-    pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=5),
-    direction="maximize",
-    load_if_exists=True,
-)
+        study_name=study_name,
+        storage=f"sqlite:///{args.study_path}",
+        sampler=TPESampler(seed=SEED, n_startup_trials=10),
+        pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=5),
+        direction="maximize",
+        load_if_exists=True,
+    )
 
     objective = create_objective(dataset, device)
 
@@ -463,7 +459,7 @@ if __name__ == '__main__':
     print(f"  total: {len(study.trials)} | complete: {len(complete)} | pruned: {len(pruned)}")
 
     if complete:
-        print(f"  best val AUPRC: {study.best_value:.4f}")
+        print(f"  best val AUROC: {study.best_value:.4f}")
         print(f"  best params:")
         for k, v in study.best_params.items():
             print(f"    {k}: {v}")
