@@ -39,6 +39,7 @@ def build_patchtst_config(
         ffn_dim=256,
         dropout=0.1,
         head_dropout=0.1,
+        channel_attention=False,
 ) -> PatchTSTConfig:
     return PatchTSTConfig(
         num_input_channels=n_channels,
@@ -57,6 +58,7 @@ def build_patchtst_config(
         use_cls_token=True,
         norm_type='batchnorm',
         scaling='std',
+        channel_attention=channel_attention,
     )
 
 

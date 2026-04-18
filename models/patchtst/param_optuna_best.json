@@ -14,5 +14,6 @@
     "patch_stride": 16,
     "use_focal": false,
     "use_onecycle": false,
-    "patience": 5
+    "patience": 5,
+    "channel_attention": true
 }
