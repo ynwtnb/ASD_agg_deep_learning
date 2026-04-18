@@ -573,6 +573,8 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
             # Use global indices directly — avoids O(N²) numpy.where per sample
             cluster_global_indices = numpy.where(kmeans_labels == i)[0]
             cluster_size_i = len(cluster_global_indices)
+            if cluster_size_i == 0:
+                continue
             dim_in_cluster_i = [representation_dim[j] for j in cluster_global_indices]
             class_label_cluster_i = [representation_class_label[j] for j in cluster_global_indices]
 
