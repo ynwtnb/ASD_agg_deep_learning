@@ -18,7 +18,7 @@ BIN_SIZE=15
 N_OBS_FRAMES=12
 N_PRED_FRAMES=12
 SPLIT="${SPLIT:-session}"
-N_SPLITS=3
+N_SPLITS="${N_SPLITS:-5}"
 GPU=0
 
 module load miniconda3/25.9.1

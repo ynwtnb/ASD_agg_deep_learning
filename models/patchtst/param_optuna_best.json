@@ -15,5 +15,5 @@
     "use_focal": false,
     "use_onecycle": false,
     "patience": 5,
-    "channel_attention": true
+    "channel_attention": false
 }
