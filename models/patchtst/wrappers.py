@@ -52,6 +52,7 @@ class PatchTSTClassifier:
         use_onecycle=False,
         patience=5,
         channel_attention=False,
+        seq_len=None,  # inferred from data if not provided
 
     ):
         self.epochs = epochs
@@ -77,6 +78,7 @@ class PatchTSTClassifier:
         self.use_onecycle = use_onecycle
         self.patience = patience
         self.channel_attention = channel_attention
+        self.seq_len = seq_len
 
 
         self.model = None
@@ -117,6 +119,7 @@ class PatchTSTClassifier:
             'use_onecycle':      self.use_onecycle,
             'patience':          self.patience,
             'channel_attention': self.channel_attention,
+            'seq_len':           self.seq_len,
         }
 
     # Data helpers
@@ -153,6 +156,7 @@ class PatchTSTClassifier:
             dropout=self.dropout, head_dropout=self.head_dropout,
             patch_len=self.patch_len, patch_stride=self.patch_stride,
             channel_attention=self.channel_attention,
+            seq_len=self.seq_len if self.seq_len is not None else X.shape[2],
         )
         self.model = AggPatchTST(config=cfg).to(self.device)
 

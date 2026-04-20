@@ -30,7 +30,7 @@ PATCH_STRIDE = 16
 
 def build_patchtst_config(
         n_channels=N_CHANNELS,
-        seq_len=SEQ_LEN,
+        seq_len=None,  # inferred from data if not provided
         patch_len=PATCH_LEN,
         patch_stride=PATCH_STRIDE,
         d_model=128,
@@ -41,6 +41,8 @@ def build_patchtst_config(
         head_dropout=0.1,
         channel_attention=False,
 ) -> PatchTSTConfig:
+    if seq_len is None:
+        seq_len = SEQ_LEN
     return PatchTSTConfig(
         num_input_channels=n_channels,
         context_length=seq_len,
