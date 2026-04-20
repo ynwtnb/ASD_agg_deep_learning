@@ -344,8 +344,8 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
 
         shared_extra = {
             'shapelet_info': shapelet_info,
-            'svm_coef': self.classifier.coef_.tolist(),
-            'svm_intercept': self.classifier.intercept_.tolist(),
+            'svm_coef': numpy.asarray(self.classifier.coef_).tolist(),
+            'svm_intercept': numpy.asarray(self.classifier.intercept_).tolist(),
             'train_feature_mean': features.mean(axis=0).tolist(),
             'train_feature_std': features.std(axis=0).tolist(),
             'train_class_distribution': numpy.bincount(y.astype(int)).tolist(),
