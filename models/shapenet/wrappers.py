@@ -200,9 +200,13 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
 
         # Encoder training
         total_batches = len(train_generator)
+        loss_history_path = (prefix_file + '_loss_history.npy') if prefix_file else None
+        loss_history = list(numpy.load(loss_history_path).tolist()) if (loss_history_path and os.path.exists(loss_history_path)) else []
+
         for i in range(start_epoch, self.epochs):
             epoch_start = timeit.default_timer()
             print(f"=== Epoch {i+1}/{self.epochs} ===")
+            epoch_loss = 0.0
             for batch_idx, batch in enumerate(train_generator):
                 print(f"batch {batch_idx+1}/{total_batches}")
                 batch_start = timeit.default_timer()
@@ -216,11 +220,15 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                 )
                 loss.backward()
                 self.optimizer.step()
+                batch_loss = loss.item()
+                epoch_loss += batch_loss
                 batch_end = timeit.default_timer()
-                print(f"  batch time: {(batch_end - batch_start)/60:.3f} min")
+                print(f"  batch {batch_idx+1}/{total_batches} loss: {batch_loss:.6f} time: {(batch_end - batch_start)/60:.3f} min")
 
+            epoch_mean_loss = epoch_loss / total_batches
+            loss_history.append(epoch_mean_loss)
             epoch_end = timeit.default_timer()
-            print(f"epoch {i+1}/{self.epochs} time: {(epoch_end - epoch_start)/60:.3f} min")
+            print(f"epoch {i+1}/{self.epochs} loss: {epoch_mean_loss:.6f} time: {(epoch_end - epoch_start)/60:.3f} min")
 
             if prefix_file is not None:
                 torch.save(
@@ -231,6 +239,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                     },
                     prefix_file + '_epoch_ckpt.pth'
                 )
+                numpy.save(loss_history_path, numpy.array(loss_history))
 
         return self.encoder
 
@@ -335,6 +344,8 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
 
         shared_extra = {
             'shapelet_info': shapelet_info,
+            'svm_coef': self.classifier.coef_.tolist(),
+            'svm_intercept': self.classifier.intercept_.tolist(),
             'train_feature_mean': features.mean(axis=0).tolist(),
             'train_feature_std': features.std(axis=0).tolist(),
             'train_class_distribution': numpy.bincount(y.astype(int)).tolist(),
