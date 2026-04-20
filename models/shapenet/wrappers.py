@@ -304,6 +304,8 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                     if os.path.exists(_p):
                         os.remove(_p)
 
+        final_shapelet_num = min(final_shapelet_num, len(utility_sort_index))
+
         # ── Stage 3: Shapelet transformation ─────────────────────────────────
         features_cache_path = prefix_file + '_train_features.npy'
         if use_cache and os.path.exists(features_cache_path):
