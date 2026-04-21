@@ -17,7 +17,7 @@ Search space covers:
 
 Usage:
     python optuna_search.py \
-        --data_path /scratch/borasaniya.t/CBS_DATA_ASD_ONLY \
+        --data_path /scratch/username/CBS_DATA_ASD_ONLY \
         --study_path experiments/results/tcn/optuna/study.db \
         --save_path experiments/results/tcn/optuna \
         --n_trials 1 \
@@ -414,6 +414,7 @@ def parse_arguments():
 
 if __name__ == '__main__':
     args = parse_arguments()
+    args.data_path = os.path.normpath(args.data_path)
     slurm_job_id = int(os.environ.get("SLURM_JOB_ID", 0))
     worker_seed = SEED + slurm_job_id
     set_seed(worker_seed)
@@ -431,6 +432,7 @@ if __name__ == '__main__':
         num_observation_frames=args.num_observation_frames,
         num_prediction_frames=args.num_prediction_frames,
         bin_size=args.bin_size,
+        o_run_from_scratch=False,
     )
     print(f"dataset loaded: {len(dataset)} instances")
 

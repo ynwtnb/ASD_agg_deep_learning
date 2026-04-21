@@ -269,11 +269,13 @@ def run_fold(train_subset, test_subset, params, device, save_path,
 
     An inner chronological val split is created from train_subset via
     make_val_split. Normalization stats are computed from the full inner
-    training split. The inner training split is then optionally stride-
+    training split and saved to disk alongside the model for inference
+    reproducibility. The inner training split is then optionally stride-
     subsampled. Class rebalancing via pos_weight is controlled by the
     max_pos_weight config parameter (0 = neutral, >0 = clamped dynamic).
-    Threshold for test evaluation is selected by maximising F1 on val
-    predictions.
+    Optimizer and lr schedule are read from params to faithfully reproduce
+    the Optuna best config. Threshold for test evaluation is selected by
+    maximising F1 on val predictions.
 
     Parameters
     ----------
@@ -282,6 +284,7 @@ def run_fold(train_subset, test_subset, params, device, save_path,
     params : dict
     device : torch.device
     save_path : str
+        Prefix for all output files. Directory must exist before calling.
     val_prop : float
     o_load : bool
 
@@ -291,12 +294,17 @@ def run_fold(train_subset, test_subset, params, device, save_path,
     """
     inner_train, inner_val = make_val_split(train_subset, val_prop=val_prop)
     print(
-        f"  inner split -- train: {len(inner_train)}"
-        f"  val: {len(inner_val)}  test: {len(test_subset)} instances"
+        f"  inner split -- train: {len(inner_train)}  "
+        f"val: {len(inner_val)}  test: {len(test_subset)} instances"
     )
 
     # compute norm stats from full inner train before subsampling
     mean, std = compute_norm_stats(inner_train)
+
+    # save norm stats alongside model for inference reproducibility
+    fold_dir = os.path.dirname(save_path)
+    np.save(os.path.join(fold_dir, 'norm_mean.npy'), mean)
+    np.save(os.path.join(fold_dir, 'norm_std.npy'), std)
 
     # subsample training instances to reduce overlap-driven memorization
     train_stride = params.get('train_stride', 1)
@@ -334,19 +342,49 @@ def run_fold(train_subset, test_subset, params, device, save_path,
         max_pw = params.get('max_pos_weight', 0)
         if max_pw > 0:
             pos_weight = compute_pos_weight(inner_train, max_pos_weight=max_pw).to(device)
+            # save pos_weight for inference reproducibility
+            np.save(
+                os.path.join(fold_dir, 'pos_weight.npy'),
+                pos_weight.cpu().numpy(),
+            )
             criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
         else:
             criterion = nn.BCEWithLogitsLoss()
 
-        optimizer = torch.optim.Adam(
-            model.parameters(),
-            lr=params['lr'],
-            weight_decay=params['weight_decay'],
-        )
-        # negate auprc so ReduceLROnPlateau minimises the negated value
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', patience=5, factor=0.5,
-        )
+        # build optimizer from config to faithfully reproduce Optuna best
+        optimizer_name = params.get('optimizer', 'adam')
+        if optimizer_name == 'adamw':
+            optimizer = torch.optim.AdamW(
+                model.parameters(),
+                lr=params['lr'],
+                weight_decay=params['weight_decay'],
+            )
+        elif optimizer_name == 'sgd':
+            optimizer = torch.optim.SGD(
+                model.parameters(),
+                lr=params['lr'],
+                weight_decay=params['weight_decay'],
+                momentum=0.9,
+            )
+        else:
+            optimizer = torch.optim.Adam(
+                model.parameters(),
+                lr=params['lr'],
+                weight_decay=params['weight_decay'],
+            )
+
+        # build lr schedule from config
+        lr_schedule = params.get('lr_schedule', 'plateau')
+        if lr_schedule == 'cosine':
+            n_warmup = params.get('warmup_epochs', 5)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=params['epochs'] - n_warmup,
+            )
+        else:
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode='min', patience=5, factor=0.5,
+            )
 
         model, _ = train(
             model=model,
@@ -375,7 +413,8 @@ def run_fold(train_subset, test_subset, params, device, save_path,
     val_probs_arr = np.array(val_probs)
     val_labels_arr = np.array(val_labels)
     print(f"  val set: {len(val_labels_arr)} instances, {int(val_labels_arr.sum())} positive")
-    print(f"  val probs: min={val_probs_arr.min():.4f} max={val_probs_arr.max():.4f} nan={np.isnan(val_probs_arr).sum()}")
+    print(f"  val probs: min={val_probs_arr.min():.4f} max={val_probs_arr.max():.4f} "
+          f"nan={np.isnan(val_probs_arr).sum()}")
 
     if np.isnan(val_probs_arr).any():
         print("  WARNING: NaN in val probs -- gradients likely exploded, check loss curve in history")
@@ -443,6 +482,7 @@ def _save_metrics(all_metrics, path):
 if __name__ == '__main__':
     start = timeit.default_timer()
     args = parse_arguments()
+    args.data_path = os.path.normpath(args.data_path)
 
     set_seed(SEED)
 
