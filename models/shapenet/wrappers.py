@@ -342,10 +342,13 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                 'length': int(len(numpy.asarray(shapelet[idx]))),
             })
 
+        if prefix_file is not None:
+            svm_path = prefix_file + '_svm.joblib'
+            joblib.dump(self.classifier, svm_path)
+            print(f"[saved] SVM classifier → {svm_path}")
+
         shared_extra = {
             'shapelet_info': shapelet_info,
-            'svm_coef': (self.classifier.coef_.get() if hasattr(self.classifier.coef_, 'get') else numpy.asarray(self.classifier.coef_)).tolist(),
-            'svm_intercept': (self.classifier.intercept_.get() if hasattr(self.classifier.intercept_, 'get') else numpy.asarray(self.classifier.intercept_)).tolist(),
             'train_feature_mean': features.mean(axis=0).tolist(),
             'train_feature_std': features.std(axis=0).tolist(),
             'train_class_distribution': numpy.bincount(y.astype(int)).tolist(),
