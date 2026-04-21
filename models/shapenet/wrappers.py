@@ -29,7 +29,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
     def __init__(self, compared_length,
                  batch_size, epochs, lr,
                  encoder, params, in_channels, cuda=False, gpu=0, seed=42,
-                 final_shapelet_num=3):
+                 final_shapelet_num=3, early_stopping_patience=None):
         self.architecture = ''
         self.cuda = cuda
         self.gpu = gpu
@@ -41,6 +41,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         self.in_channels = in_channels
         self.seed = seed
         self.final_shapelet_num = final_shapelet_num
+        self.early_stopping_patience = early_stopping_patience
         self.loss = losses.triplet.PNTripletLoss(
             compared_length, seed=seed
         )
@@ -203,6 +204,11 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         loss_history_path = (prefix_file + '_loss_history.npy') if prefix_file else None
         loss_history = list(numpy.load(loss_history_path).tolist()) if (loss_history_path and os.path.exists(loss_history_path)) else []
 
+        # Early stopping state
+        best_loss = float('inf')
+        best_encoder_state = None
+        no_improve_count = 0
+
         for i in range(start_epoch, self.epochs):
             epoch_start = timeit.default_timer()
             print(f"=== Epoch {i+1}/{self.epochs} ===")
@@ -240,6 +246,19 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                     prefix_file + '_epoch_ckpt.pth'
                 )
                 numpy.save(loss_history_path, numpy.array(loss_history))
+
+            if self.early_stopping_patience is not None:
+                if epoch_mean_loss < best_loss:
+                    best_loss = epoch_mean_loss
+                    best_encoder_state = {k: v.clone() for k, v in self.encoder.state_dict().items()}
+                    no_improve_count = 0
+                else:
+                    no_improve_count += 1
+                    print(f"[early stopping] no improvement for {no_improve_count}/{self.early_stopping_patience} epochs")
+                    if no_improve_count >= self.early_stopping_patience:
+                        print(f"[early stopping] stopping at epoch {i+1}, restoring best weights (loss={best_loss:.6f})")
+                        self.encoder.load_state_dict(best_encoder_state)
+                        break
 
         return self.encoder
 
@@ -779,7 +798,8 @@ class CausalCNNEncoderClassifier(TimeSeriesEncoderClassifier):
     def __init__(self, compared_length=50, batch_size=1, epochs=100, lr=0.001,
                  channels=10, depth=1,
                  reduced_size=10, out_channels=10, kernel_size=4,
-                 in_channels=1, cuda=False, gpu=0, seed=42, final_shapelet_num=3):
+                 in_channels=1, cuda=False, gpu=0, seed=42, final_shapelet_num=3,
+                 early_stopping_patience=None):
         super(CausalCNNEncoderClassifier, self).__init__(
             compared_length, batch_size,
             epochs, lr,
@@ -788,7 +808,8 @@ class CausalCNNEncoderClassifier(TimeSeriesEncoderClassifier):
             self.__encoder_params(in_channels, channels, depth, reduced_size,
                                   out_channels, kernel_size),
             in_channels, cuda, gpu, seed,
-            final_shapelet_num=final_shapelet_num
+            final_shapelet_num=final_shapelet_num,
+            early_stopping_patience=early_stopping_patience,
         )
         self.architecture = 'CausalCNN'
         self.channels = channels
@@ -897,15 +918,18 @@ class CausalCNNEncoderClassifier(TimeSeriesEncoderClassifier):
             'cuda': self.cuda,
             'gpu': self.gpu,
             'seed': self.seed,
-            'final_shapelet_num': self.final_shapelet_num
+            'final_shapelet_num': self.final_shapelet_num,
+            'early_stopping_patience': self.early_stopping_patience,
         }
 
     def set_params(self, compared_length, batch_size, epochs, lr,
                    channels, depth, reduced_size, out_channels, kernel_size,
-                   in_channels, cuda, gpu, seed=42, final_shapelet_num=3):
+                   in_channels, cuda, gpu, seed=42, final_shapelet_num=3,
+                   early_stopping_patience=None):
         self.__init__(
             compared_length, batch_size, epochs, lr, channels, depth,
             reduced_size, out_channels, kernel_size, in_channels, cuda, gpu, seed,
-            final_shapelet_num=final_shapelet_num
+            final_shapelet_num=final_shapelet_num,
+            early_stopping_patience=early_stopping_patience,
         )
         return self
