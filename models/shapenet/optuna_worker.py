@@ -87,6 +87,8 @@ def objective(trial, args, dataset):
         json.dump(meta, f, indent=2)
 
     # Write params to a temp JSON so run_split can read it via fit_parameters
+    if args.early_stopping_patience is not None:
+        params['early_stopping_patience'] = args.early_stopping_patience
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump(params, f)
         params_file = f.name
@@ -151,6 +153,9 @@ def parse_arguments():
     parser.add_argument('--resume_trial_dir', type=str, default=None,
                         help='Path to an interrupted trial directory to resume from. '
                              'Params are read from trial_params.json inside that directory.')
+    parser.add_argument('--early_stopping_patience', type=int, default=None,
+                        help='Patience for early stopping on encoder training loss. '
+                             'If not set, early stopping is disabled.')
     return parser.parse_args()
 
 
