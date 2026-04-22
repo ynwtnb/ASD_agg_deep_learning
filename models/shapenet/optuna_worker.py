@@ -31,7 +31,7 @@ import torch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../shared'))
 sys.path.insert(0, os.path.dirname(__file__))
 
-from pipeline import load_dataset, run_split
+from pipeline import load_dataset, run_split, set_seed
 
 
 # ── Search space ──────────────────────────────────────────────────────────────
@@ -55,6 +55,8 @@ def sample_params(trial):
 # ── Objective ─────────────────────────────────────────────────────────────────
 
 def objective(trial, args, dataset):
+    set_seed(args.seed + trial.number)
+
     # ── Resume mode: reuse an existing (interrupted) trial directory ──────────
     # The interrupted trial's params are read from its trial_params.json so we
     # continue with identical hyperparameters.  Existing encoder / shapelet /
@@ -163,6 +165,8 @@ if __name__ == '__main__':
     args = parse_arguments()
     os.makedirs(args.save_path, exist_ok=True)
 
+    set_seed(args.seed)
+
     dataset = load_dataset(
         data_path=args.data_path,
         bin_size=args.bin_size,
@@ -177,6 +181,7 @@ if __name__ == '__main__':
         storage=args.storage,
         direction='maximize',  # maximise val AUROC
         load_if_exists=True,
+        sampler=optuna.samplers.TPESampler(seed=args.seed),
     )
 
     study.optimize(
