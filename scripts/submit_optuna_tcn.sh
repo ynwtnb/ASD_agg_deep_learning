@@ -7,8 +7,8 @@
 #   bash scripts/submit_optuna_tcn.sh 4 4 8     # 1-min window, 8 jobs
 
 N_OBS_FRAMES=${1:-12}
-N_PRED_FRAMES=${2:-12}
-N_JOBS=${3:-12}
+N_PRED_FRAMES=${2:-$N_OBS_FRAMES}  
+N_JOBS=${3:-8}
 
 DATA_PATH="/scratch/borasaniya.t/CBS_DATA_ASD_ONLY"
 WINDOW_TAG="obs${N_OBS_FRAMES}_pred${N_PRED_FRAMES}"

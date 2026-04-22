@@ -7,7 +7,7 @@
 #   bash scripts/tcn_best_run.sh 4  4    # 1-min window
 
 N_OBS_FRAMES=${1:-12}
-N_PRED_FRAMES=${2:-12}
+N_PRED_FRAMES=${2:-$N_OBS_FRAMES}
 TRIAL_NUMBER=${3:-0}
 SEED=$((42 + TRIAL_NUMBER))
 
