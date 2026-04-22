@@ -450,6 +450,7 @@ def parse_arguments():
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--run_from_scratch', action='store_true', default=False)
     parser.add_argument('--load', action='store_true', default=False)
+    parser.add_argument('--seed', type=int, default=42)
     return parser.parse_args()
 
 
@@ -484,7 +485,7 @@ if __name__ == '__main__':
     args = parse_arguments()
     args.data_path = os.path.normpath(args.data_path)
 
-    set_seed(SEED)
+    set_seed(args.seed)
 
     if args.cuda and not torch.cuda.is_available():
         print("CUDA not available, proceeding on CPU")

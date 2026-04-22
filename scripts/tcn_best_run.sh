@@ -8,6 +8,8 @@
 
 N_OBS_FRAMES=${1:-12}
 N_PRED_FRAMES=${2:-12}
+TRIAL_NUMBER=${3:-0}
+SEED=$((42 + TRIAL_NUMBER))
 
 WINDOW_TAG="obs${N_OBS_FRAMES}_pred${N_PRED_FRAMES}"
 DATA_PATH="/scratch/borasaniya.t/CBS_DATA_ASD_ONLY"
@@ -42,6 +44,7 @@ python models/tcn/pipeline.py \
     --hyper "$HYPER" \
     --num_observation_frames $N_OBS_FRAMES \
     --num_prediction_frames $N_PRED_FRAMES \
+    --seed $SEED \
     --split session \
     --cuda \
     --gpu 0
