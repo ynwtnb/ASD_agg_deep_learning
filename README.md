@@ -42,7 +42,6 @@ project/
 │
 └── scripts/                      # shell scripts
 ```
-<<<<<<< HEAD
 
 ## Set up
 
@@ -62,7 +61,3 @@ module load miniconda3/25.9.1
 3. Change the `prefix` of the `environment.yml` file to the path where you want to save the environment.
 
 4. Run `scripts/setup.sh` to set up the environment for the first time.
-
-
-=======
->>>>>>> fc94055e7224e68ecbefc07c17fd87f4a06ef64e
