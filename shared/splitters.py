@@ -37,8 +37,9 @@ def session_splits(dataset: ASDAggressionDataset, test_prop=0.2):
     instances = dataset.instances
     all_idx = np.arange(len(dataset))
 
-    train_idx = np.array([])
-    test_idx = np.array([])
+    # use lists to avoid float64 indices from np.concatenate with empty array
+    train_idx = []
+    test_idx = []
 
     for pid in pids:
         pid_mask = dataset.get_participant_ids() == pid
@@ -49,16 +50,20 @@ def session_splits(dataset: ASDAggressionDataset, test_prop=0.2):
         for session_id in set(pid_session_ids):
             session_mask = pid_session_ids == session_id
             session_superposition_lists = pid_superposition_lists[session_mask]
+            session_all_idx = all_idx[pid_mask][session_mask]
 
             n_samples = len(pid_instances[session_mask])
-            first_test_sample_idx = trunc(n_samples*(1-test_prop))
-            n_overlapping_samples = session_superposition_lists[first_test_sample_idx][0]
+            first_test_sample_idx = trunc(n_samples * (1 - test_prop))
+            n_overlapping_samples = int(session_superposition_lists[first_test_sample_idx][0])
             last_training_sample_idx = first_test_sample_idx - n_overlapping_samples
-    
-            # Store the indices of the training and test samples
-            train_idx = np.concatenate([train_idx, all_idx[pid_mask][session_mask][:last_training_sample_idx]])
-            test_idx = np.concatenate([test_idx, all_idx[pid_mask][session_mask][first_test_sample_idx:]])
-        
+
+            # skip: session too short to produce a valid train segment after gap removal
+            if last_training_sample_idx <= 0:
+                continue
+
+            train_idx.extend(session_all_idx[:last_training_sample_idx].tolist())
+            test_idx.extend(session_all_idx[first_test_sample_idx:].tolist())
+
     return Subset(dataset, train_idx), Subset(dataset, test_idx)
 
 def kfold_participant_splits(dataset: ASDAggressionDataset, n_splits=5, seed=42):

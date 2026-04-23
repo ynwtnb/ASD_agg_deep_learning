@@ -1,0 +1,13 @@
+{
+    "n_input_channels": 10,
+    "channel_list": [64, 64, 128, 128, 256, 256, 256, 256],
+    "kernel_size": 7,
+    "dropout": 0.2,
+    "readout": "mean",
+    "lr": 0.00001,
+    "weight_decay": 1e-4,
+    "batch_size": 32,
+    "epochs": 100,
+    "patience": 15,
+    "max_grad_norm": 1.0
+}
