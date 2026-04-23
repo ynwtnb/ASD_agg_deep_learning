@@ -1,12 +1,13 @@
 {
-    "batch_size": 10,
-    "channels": 40,
+    "batch_size": 512,
+    "channels": 20,
     "compared_length": null,
-    "depth": 10,
-    "epochs": 400,
+    "depth": 5,
+    "epochs": 3,
     "in_channels": 1,
     "kernel_size": 3,
     "lr": 0.001,
-    "out_channels": 320,
-    "reduced_size": 160
+    "out_channels": 160,
+    "reduced_size": 160,
+    "final_shapelet_num": 3
 }
