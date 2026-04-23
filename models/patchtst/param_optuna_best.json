@@ -1,0 +1,19 @@
+{
+    "epochs": 50,
+    "batch_size": 64,
+    "lr": 0.0008664070331272434,
+    "weight_decay": 1.1796425298435323e-05,
+    "pos_weight": 5.323272822582853,
+    "d_model": 64,
+    "n_heads": 8,
+    "n_layers": 3,
+    "ffn_dim": 512,
+    "dropout": 0.4762977548586139,
+    "head_dropout": 0.2108328429576171,
+    "patch_len": 32,
+    "patch_stride": 16,
+    "use_focal": false,
+    "use_onecycle": false,
+    "patience": 5,
+    "channel_attention": false
+}

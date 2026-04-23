@@ -10,10 +10,11 @@ dependencies:
   - ipywidgets
   - nbformat
   - scikit-learn
-  - pytorch
+  - pytorch::pytorch-cuda=11.8
   - joblib
   - pandas
   - tqdm
   - pip:
     - fast-pytorch-kmeans
+  - transformers
 prefix: /home/watanabe.y/miniconda3/envs/asd_agg_dl
