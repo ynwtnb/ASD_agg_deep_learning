@@ -247,21 +247,27 @@ def normalize(train, *others):
     """
     Z-score normalises each channel independently using train-set statistics.
     Applies the same normalisation to any additional arrays (val, test, etc.).
-    Modifies arrays in-place and returns them as a tuple.
+    Modifies arrays in-place and returns (arrays tuple, stats dict).
 
     Usage:
-        train, test = normalize(train, test)
-        train, val, test = normalize(train, val, test)
+        (train, test), stats = normalize(train, test)
+        (train, val, test), stats = normalize(train, val, test)
+
+    stats: {'mean': list (C,), 'std': list (C,)}
     """
     nb_dims = train.shape[1]
+    means = np.zeros(nb_dims)
+    stds = np.zeros(nb_dims)
     for j in range(nb_dims):
         mean = np.mean(train[:, j])
         var = np.var(train[:, j])
         std = math.sqrt(var) if var > 0 else 1.0
+        means[j] = mean
+        stds[j] = std
         train[:, j] = (train[:, j] - mean) / std
         for arr in others:
             arr[:, j] = (arr[:, j] - mean) / std
-    return (train,) + others
+    return (train,) + others, {'mean': means.tolist(), 'std': stds.tolist()}
 
 
 def fit_parameters(file, train, train_labels, test, test_labels, cuda, gpu,
@@ -349,13 +355,13 @@ def _prepare_fold_data(train_subset, test_subset, args):
         # Full inner-train for normalization stats; discarded afterward
         full_train, _, _ = subset_to_numpy(inner_train_subset)
         train, train_labels, _ = subset_to_numpy(subsampled)
-        normalize(full_train, train, val_X, test)
+        _, norm_stats = normalize(full_train, train, val_X, test)
     else:
         train, train_labels, _ = subset_to_numpy(inner_train_subset)
-        normalize(train, val_X, test)
+        _, norm_stats = normalize(train, val_X, test)
 
     print(f"  train={len(train)}, val={len(val_X)}, test={len(test)}")
-    return train, train_labels, val_X, val_y, val_meta, test, test_labels, test_meta
+    return train, train_labels, val_X, val_y, val_meta, test, test_labels, test_meta, norm_stats
 
 
 def run_split(args, dataset, params_file, base_save_path, cluster_num, run_config=None):
@@ -388,7 +394,7 @@ def run_split(args, dataset, params_file, base_save_path, cluster_num, run_confi
 
     elif args.split == 'session':
         train_subset, test_subset = session_splits(dataset)
-        train, train_labels, val_X, val_y, val_meta, test, test_labels, test_meta = \
+        train, train_labels, val_X, val_y, val_meta, test, test_labels, test_meta, norm_stats = \
             _prepare_fold_data(train_subset, test_subset, args)
 
         fold_dir = os.path.join(base_save_path, 'session_model')
@@ -399,13 +405,14 @@ def run_split(args, dataset, params_file, base_save_path, cluster_num, run_confi
             params_file, train, train_labels, test, test_labels,
             args, prefix, cluster_num, run_config,
             test_meta=test_meta, val_X=val_X, val_y=val_y, val_meta=val_meta,
+            norm_stats=norm_stats,
         )
         val_aurocs.append(_read_val_auroc(prefix))
 
     elif args.split == 'loso':
         for test_pid, train_subset, test_subset in loso_splits(dataset):
             print(f"\n=== LOSO fold: test participant {test_pid} ===")
-            train, train_labels, val_X, val_y, val_meta, test, test_labels, test_meta = \
+            train, train_labels, val_X, val_y, val_meta, test, test_labels, test_meta, norm_stats = \
                 _prepare_fold_data(train_subset, test_subset, args)
 
             fold_dir = os.path.join(base_save_path, f'pid_{test_pid}')
@@ -416,13 +423,14 @@ def run_split(args, dataset, params_file, base_save_path, cluster_num, run_confi
                 params_file, train, train_labels, test, test_labels,
                 args, prefix, cluster_num, run_config,
                 test_meta=test_meta, val_X=val_X, val_y=val_y, val_meta=val_meta,
+                norm_stats=norm_stats,
             )
             val_aurocs.append(_read_val_auroc(prefix))
 
     elif args.split == 'kfold':
         for fold, train_subset, test_subset in kfold_participant_splits(dataset, n_splits=args.n_splits):
             print(f"\n=== K-Fold: fold {fold} ===")
-            train, train_labels, val_X, val_y, val_meta, test, test_labels, test_meta = \
+            train, train_labels, val_X, val_y, val_meta, test, test_labels, test_meta, norm_stats = \
                 _prepare_fold_data(train_subset, test_subset, args)
 
             fold_dir = os.path.join(base_save_path, f'fold_{fold}')
@@ -433,6 +441,7 @@ def run_split(args, dataset, params_file, base_save_path, cluster_num, run_confi
                 params_file, train, train_labels, test, test_labels,
                 args, prefix, cluster_num, run_config,
                 test_meta=test_meta, val_X=val_X, val_y=val_y, val_meta=val_meta,
+                norm_stats=norm_stats,
             )
             val_aurocs.append(_read_val_auroc(prefix))
 
@@ -441,7 +450,8 @@ def run_split(args, dataset, params_file, base_save_path, cluster_num, run_confi
 
 def _run_one_fold(params_file, train, train_labels, test, test_labels,
                   args, prefix, cluster_num, run_config,
-                  test_meta=None, val_X=None, val_y=None, val_meta=None):
+                  test_meta=None, val_X=None, val_y=None, val_meta=None,
+                  norm_stats=None):
     """Train and evaluate one fold. Handles cache validation and model saving."""
     if args.load:
         classifier = wrappers.CausalCNNEncoderClassifier()
@@ -460,6 +470,10 @@ def _run_one_fold(params_file, train, train_labels, test, test_labels,
     if not use_cache and run_config is not None:
         with open(prefix + '_run_config.json', 'w') as fp:
             json.dump(run_config, fp)
+    
+    if norm_stats is not None:
+        with open(prefix + '_norm_stats.json', 'w') as fp:
+            json.dump(norm_stats, fp)
 
     classifier = fit_parameters(
         params_file, train, train_labels, test, test_labels,
