@@ -1,0 +1,19 @@
+name: asd_agg_dl
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - ipykernel
+  - matplotlib
+  - peakutils
+  - ipywidgets
+  - nbformat
+  - scikit-learn
+  - pytorch
+  - joblib
+  - pandas
+  - tqdm
+  - pip:
+    - fast-pytorch-kmeans
+prefix: /home/watanabe.y/miniconda3/envs/asd_agg_dl
